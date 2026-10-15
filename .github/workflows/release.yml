@@ -1,0 +1,58 @@
+name: Release
+
+# Publishing to npm is also publishing to the pi package gallery: pi.dev/packages indexes npm
+# packages whose metadata carries the `pi-package` keyword. There is no separate upload step.
+#
+# Two ways to authenticate, described in PUBLISHING.md. The first is preferred because it
+# involves no long-lived secret.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Pack and verify only; do not publish"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write # required for npm trusted publishing (OIDC) and provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      # Trusted publishing needs a recent npm; it is newer than what ships with Node 24.
+      - name: Install latest npm
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `prepublishOnly` also runs typecheck and tests, but running them here fails fast and
+      # keeps the published artifact verifiably green in the same job.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Verify tarball contents
+        run: npm pack --dry-run
+
+      - name: Publish
+        if: ${{ !inputs.dry-run }}
+        run: npm publish --access public --provenance
+        env:
+          # Only needed without trusted publishing. See PUBLISHING.md.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -28,7 +28,8 @@
     "src",
     "README.md",
     "README.zh-CN.md",
-    "AGENTS.md"
+    "AGENTS.md",
+    "PUBLISHING.md"
   ],
   "pi": {
     "extensions": [
