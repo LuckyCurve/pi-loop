@@ -34,6 +34,7 @@ Pick the cheapest layer that can actually fail for the reason you care about:
 | Pure logic | `tests/duration.test.ts`, `tests/commands.test.ts`, `tests/engine.test.ts` | Scheduling rules, parsing, state transitions. No pi, no I/O, fake clock. |
 | Extension contract | `tests/extension.test.ts` | Command/tool wiring, lifecycle, error paths (stale context, persistence failure) through a fake pi API. |
 | Real runtime | `tests/e2e.test.ts` | Anything that depends on real pi behaviour: idleness, injected-prompt delivery, tool activation, resume-after-pause. |
+| Activation | `tests/activation.test.ts` | Which tools the model is actually offered, asserted against the real runtime. |
 | Workflow | `tests/triage.test.ts` | The end-to-end user story the feature exists for. |
 | Real model | `tests/live.test.ts` | A genuine model iterating a loop. Skips itself with no provider configured. |
 
@@ -50,6 +51,10 @@ by running against real pi rather than by reading docs:
   happens inside a `setTimeout`, where nothing can catch it.
 - **No `session_start` in SDK/print modes** (covered by the lazy-init path and its tests). The
   engine is created on demand rather than assumed from a lifecycle event.
+- **A stale tool-loadout snapshot resurrecting `loop_break`** (`tests/activation.test.ts`). A run
+  that is already in flight re-applies the loadout it snapshotted while building its request, so a
+  loop that ends mid-run would leave `loop_break` declared after the loop was gone. The intended
+  set is therefore re-asserted in `agent_start`, not only on engine change.
 
 ## Architecture rules
 

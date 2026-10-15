@@ -99,7 +99,14 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			ctxRef?.ui.notify(message, level);
 		}
 
-		/** `loop_break` is only declared to the model while a loop exists. */
+		/**
+		 * `loop_break` is only declared to the model while a loop exists.
+		 *
+		 * A run that is already in flight snapshots its tool loadout and re-applies it when it builds
+		 * the request (pi's `_preparePromptAndToolLoadout`), which can resurrect the tool after the loop
+		 * that justified it is gone. Re-assert the intended state on every turn boundary so the model's
+		 * tool list matches reality rather than a snapshot taken before the loop ended.
+		 */
 		function syncToolActivation(): void {
 			if (!engine) return;
 			try {
@@ -415,7 +422,14 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 
 		// The footer countdown is refreshed by the status timer and on every engine change, so this
 		// extension deliberately registers no `turn_end` handler: that boundary is a heavier path in pi
-		// (it needs a persisted assistant entry) and nothing here depends on it.
+		// (it needs a persisted assistant entry), and the tool set is re-asserted at run start instead.
+		//
+		// Re-assert here rather than on change only: a run that was already in flight when the loop
+		// ended re-applies its pre-end loadout snapshot while building the request, which would
+		// otherwise put `loop_break` back in front of the model after the loop it belonged to is gone.
+		pi.on("agent_start", async () => {
+			syncToolActivation();
+		});
 	};
 }
 

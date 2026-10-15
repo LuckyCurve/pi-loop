@@ -135,7 +135,7 @@ This project is developed test-first. See [AGENTS.md](AGENTS.md) for the working
 
 ```bash
 npm install
-npm test          # 66 tests
+npm test          # 70 tests
 npm run typecheck
 ```
 
@@ -149,6 +149,8 @@ Test layers, cheapest first:
   the fakes cannot: iterations are not queued behind a running turn, prompts sent with
   `expandPromptTemplates: false` reach the model as text, `loop_break` is declared exactly while a
   loop exists, and a real user message resumes an agent-paused loop
+- `tests/activation.test.ts` — real-runtime regression: `loop_break` is offered exactly while a
+  loop exists, including after a loop ends mid-run
 - `tests/triage.test.ts` — the defect-triage workflow end to end
 - `tests/live.test.ts` — a real model iterating a `/loop`; skips itself when no provider is set
 

@@ -29,7 +29,8 @@
     "README.md",
     "README.zh-CN.md",
     "AGENTS.md",
-    "PUBLISHING.md"
+    "PUBLISHING.md",
+    "LICENSE"
   ],
   "pi": {
     "extensions": [

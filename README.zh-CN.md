@@ -118,7 +118,7 @@ pi -e ./extensions/loop/index.ts            # 临时试用，无需安装
 
 ```bash
 npm install
-npm test          # 66 个测试
+npm test          # 70 个测试
 npm run typecheck
 ```
 
@@ -127,6 +127,7 @@ npm run typecheck
 - `tests/duration.test.ts`、`tests/commands.test.ts`、`tests/engine.test.ts` —— 纯逻辑，不涉及 pi，时间由假时钟控制
 - `tests/extension.test.ts` —— 用假 pi API 驱动真实扩展，覆盖上下文失效、持久化失败等路径
 - `tests/e2e.test.ts` —— 真实 `AgentSession` + 脚本化 provider，验证假件无法保证的前提：迭代不会排在运行中的回合之后、`expandPromptTemplates: false` 的 prompt 以文本送达模型、`loop_break` 恰好在存在循环时声明、真实用户消息能恢复被 Agent 暂停的循环
+- `tests/activation.test.ts` —— 真实运行时回归：`loop_break` 仅在存在循环时暴露，循环在运行中途结束时也能正确撤下
 - `tests/triage.test.ts` —— 缺陷单分流工作流的端到端验证
 - `tests/live.test.ts` —— 真实模型跑 `/loop`；未配置 provider 时自动跳过
 
