@@ -25,6 +25,7 @@ import { type Clock, systemClock } from "../../src/clock.ts";
 import { DEFAULT_EXPIRE_MS, DEFAULT_MAX_LOOPS, LoopEngine, type LoopRecord, type NotifyLevel } from "../../src/engine.ts";
 import {
 	actionOptions,
+	loopDetail,
 	loopHeading,
 	loopOptions,
 	noLoopsMessage,
@@ -345,7 +346,13 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 		 */
 		async function choose(
 			ctx: ExtensionContext,
-			dialog: { title: () => string; load: () => readonly PanelOption[]; refresh: boolean },
+			dialog: {
+				title: () => string;
+				load: () => readonly PanelOption[];
+				/** Full text for the highlighted row; see `createPanelView`. */
+				intro?: (selectedValue: string | undefined) => string | undefined;
+				refresh: boolean;
+			},
 		): Promise<PanelOption | undefined> {
 			if (ctx.mode !== "tui") {
 				if (!ctx.hasUI) return undefined;
@@ -364,6 +371,7 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 						clock,
 						load: dialog.load,
 						title: dialog.title,
+						intro: dialog.intro,
 						hint: keyHintLine(),
 						refreshMs: dialog.refresh ? undefined : 0,
 						maxLines: () => panelLineBudget(tui.terminal.rows),
@@ -401,6 +409,11 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 				const selected = await choose(ctx, {
 					title: () => optionTitle(engineRef.list().length),
 					load: () => loopOptions(engineRef.list(), clock.now()),
+					// The highlighted loop's prompt in full, below the rows.
+					intro: (value) => {
+						const loop = value === undefined ? undefined : engineRef.get(value);
+						return loop ? loopDetail(loop) : undefined;
+					},
 					refresh: true,
 				});
 				if (!selected) return;
@@ -421,14 +434,20 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			}
 		}
 
-		/** Returns "close" when the panel should stop, "back" to re-read the loop list. */
+		/**
+	 * Returns "close" when the panel should stop, "back" to re-read the loop list. Closing matters
+	 * for Run now: the iteration it starts belongs in the transcript, not behind a modal box.
+	 */
 		async function runLoopActions(
 			ctx: ExtensionContext,
 			engineRef: LoopEngine,
 			loop: LoopRecord,
 		): Promise<"close" | "back"> {
 			const selected = await choose(ctx, {
-				title: () => loopHeading(loop),
+				// The caption is drawn into the border, so it stays a short status line; the prompt
+				// goes below as wrapped body text, where it has room.
+				title: () => loopHeading(loop, clock.now()),
+				intro: () => loopDetail(loop),
 				load: () => actionOptions(loop),
 				// The three actions never change, so a ticking repaint would only burn CPU.
 				refresh: false,
@@ -443,6 +462,18 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 					// Nothing left to manage means nothing left to show: re-reading the list would
 					// replace the removal confirmation with "No loops are running."
 					return engineRef.isEmpty() ? "close" : "back";
+				}
+				case "run": {
+					const outcome = engineRef.runNow(action.id);
+					if (outcome === "missing") {
+						ctx.ui.notify(`No loop with id ${action.id}.`, "warning");
+					} else if (outcome === "busy") {
+						ctx.ui.notify(`Loop ${action.id} was not run: the agent is still running.`, "info");
+					} else {
+						ctx.ui.notify(`Ran loop ${action.id} now.`, "info");
+					}
+					// A manual run starts a turn of its own, so close the panel rather than covering it.
+					return "close";
 				}
 				case "toggle": {
 					if (action.enable) {

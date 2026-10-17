@@ -20,10 +20,13 @@ initTheme("dark", false);
 const KEY_DOWN = "\x1b[B";
 const KEY_ENTER = "\r";
 
+/** Safety stop for the cursor walk: a dialog with more rows than this is a bug in the test. */
+const MAX_ITEMS = 64;
+
 export interface ScriptedUI {
 	ui: ExtensionUIContext;
-	/** Every dialog shown, in order, with the rows it rendered. */
-	dialogs: { title: string; options: string[] }[];
+	/** Every dialog shown, in order: its caption, everything the box showed, and its rows. */
+	dialogs: { title: string; body: string[]; rows: string[] }[];
 	/**
 	 * How each `custom()` dialog was presented. The panel is a centered overlay, not a selector in
 	 * the editor slot, and that is easy to lose silently — nothing about the rows would change.
@@ -66,7 +69,7 @@ const TEST_TUI = { requestRender: () => undefined, terminal: { rows: 40, cols: 1
 
 export function scriptedUI(options: ScriptedUIOptions = {}): ScriptedUI {
 	const answers: (string | undefined)[] = [];
-	const dialogs: { title: string; options: string[] }[] = [];
+	const dialogs: { title: string; body: string[]; rows: string[] }[] = [];
 	const presentation: { overlay: boolean; anchor: string | undefined }[] = [];
 	const notifications: { message: string; level: string }[] = [];
 	const statuses: (string | undefined)[] = [];
@@ -91,7 +94,8 @@ export function scriptedUI(options: ScriptedUIOptions = {}): ScriptedUI {
 		},
 		select: async (title: string, rows: string[]) => {
 			options.onDialog?.();
-			dialogs.push({ title, options: [...rows] });
+			// The `select` fallback is one line per row, so body and rows are the same thing there.
+			dialogs.push({ title, body: [...rows], rows: [...rows] });
 			// The `select` fallback is the non-TUI path; it has no overlay to configure.
 			presentation.push({ overlay: false, anchor: undefined });
 			const answer = answers.shift();
@@ -127,24 +131,44 @@ export function scriptedUI(options: ScriptedUIOptions = {}): ScriptedUI {
 				dispose?(): void;
 			};
 
-			const lines = component.render(200).map((line) => line.trim());
-			// Layout is `╭─ title ─╮` / rows… / hint / `╰───╯`. `panel-view.test.ts` pins that
-			// layout, so a shift here fails there first, pointing at the real cause.
-			const rows = lines
-				.slice(1, -2)
-				.map((row) =>
-					row
-						// The box pads rows to its full width; the border and padding are not content.
-						.replace(/^│\s*/, "")
-						.replace(/[│\s]+$/, "")
-						.replace(/^[→›]\s+/, ""),
-				);
-			dialogs.push({ title: lines[0]?.replace(/^[╭─\s]+/, "").replace(/[─╮\s]+$/, "") ?? "", options: rows });
-			const index = rows.findIndex((row) => row.includes(answer));
-			if (index === -1) {
-				throw new Error(`no row in ${JSON.stringify(rows)} matched "${answer}"`);
+			const inner = component.render(200).map((line) => line.trim());
+			// `panel-view.test.ts` pins the box layout, so a change there fails there first.
+			const strip = (line: string): string =>
+				line
+					.replace(/^│\s*/, "")
+					.replace(/[│\s]+$/, "");
+			// The caption sits inside the top border: `╭─ Loops (1) ─╮`.
+			const title = strip(inner[0] ?? "")
+				.replace(/^[╭─\s]+/, "")
+				.replace(/[╮─\s]+$/, "");
+			// Everything the box shows, so a test can assert what a user would read.
+			const body = inner.slice(1, -1).map(strip);
+
+			// Walk the cursor through the list rather than assuming one line per row: rows now carry a
+			// wrapped detail block, and the cursor is what actually moves. Re-renders each time, since
+			// the cursor position lives in the component.
+			const cursorRow = (): string | undefined => {
+				for (const line of component.render(200)) {
+					const content = strip(line.trim());
+					if (content.startsWith("→ ")) return content.replace(/^→\s+/, "");
+				}
+				return undefined;
+			};
+			const rows: string[] = [];
+			for (let step = 0; step < MAX_ITEMS; step++) {
+				const label = cursorRow();
+				if (label === undefined || rows.includes(label)) break;
+				rows.push(label);
+				component.handleInput(KEY_DOWN);
 			}
-			for (let step = 0; step < index; step++) component.handleInput(KEY_DOWN);
+			dialogs.push({ title, body, rows });
+
+			let found = cursorRow()?.includes(answer) === true;
+			for (let step = 0; step < MAX_ITEMS && !found; step++) {
+				component.handleInput(KEY_DOWN);
+				found = cursorRow()?.includes(answer) === true;
+			}
+			if (!found) throw new Error(`no row among ${JSON.stringify(rows)} matched "${answer}"`);
 			component.handleInput(KEY_ENTER);
 			// pi calls this when the dialog closes; the panel clears its repaint timer there.
 			component.dispose?.();

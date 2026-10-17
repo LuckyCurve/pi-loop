@@ -299,6 +299,69 @@ describe("LoopEngine control", () => {
 	});
 });
 
+describe("LoopEngine run now", () => {
+	it("runs an iteration immediately without touching the schedule", () => {
+		const h = harness();
+		h.engine.start({ prompt: "a", intervalMs: 60_000 });
+		expect(h.injected, "start injects the first iteration").toHaveLength(1);
+
+		h.clock.advance(10_000);
+		const scheduled = h.engine.get("l1")!.nextAt;
+		expect(h.engine.runNow("l1")).toBe("ran");
+		expect(h.injected).toHaveLength(2);
+		expect(h.engine.get("l1")!.runs).toBe(2);
+		expect(h.engine.get("l1")!.nextAt, "a manual run must not move the schedule").toBe(scheduled);
+
+		// The scheduled iteration still arrives on its own time.
+		h.clock.advance(49_999);
+		expect(h.injected).toHaveLength(2);
+		h.clock.advance(1);
+		expect(h.injected).toHaveLength(3);
+	});
+
+	it("skips a manual run while the agent is busy, changing nothing", () => {
+		const h = harness();
+		h.engine.start({ prompt: "a", intervalMs: 60_000 });
+		h.clock.advance(10_000);
+		const before = { ...h.engine.get("l1")! };
+
+		h.busy = true;
+		expect(h.engine.runNow("l1")).toBe("busy");
+
+		const after = h.engine.get("l1")!;
+		expect(h.injected).toHaveLength(1);
+		expect(after.runs).toBe(before.runs);
+		expect(after.skips, "a manual attempt is not a scheduled skip").toBe(before.skips);
+		expect(after.nextAt).toBe(before.nextAt);
+	});
+
+	it("runs a paused loop once without resuming it", () => {
+		// The panel offers Run now for every loop, so a disabled or waiting one can be nudged once
+		// without losing the reason it was stopped.
+		const h = harness();
+		h.engine.start({ prompt: "a", intervalMs: 60_000 });
+		h.engine.pause("l1", "user");
+		expect(h.engine.runNow("l1")).toBe("ran");
+		expect(h.injected).toHaveLength(2);
+		expect(h.engine.get("l1")!.paused).toBe("user");
+	});
+
+	it("reports an unknown loop instead of running something", () => {
+		const h = harness();
+		h.engine.start({ prompt: "a", intervalMs: 60_000 });
+		expect(h.engine.runNow("l9")).toBe("missing");
+		expect(h.injected).toHaveLength(1);
+	});
+
+	it("targets the manual run for a following loop_break", () => {
+		const h = harness();
+		h.engine.start({ prompt: "a", intervalMs: 60_000 });
+		h.engine.start({ prompt: "b", intervalMs: 60_000 });
+		h.engine.runNow("l1");
+		expect(h.engine.lastFired?.id).toBe("l1");
+	});
+});
+
 describe("LoopEngine persistence", () => {
 	it("round-trips loops through toJSON/restore without firing", () => {
 		const h = harness();

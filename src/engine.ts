@@ -33,6 +33,9 @@ export interface LoopRecord {
 
 export type NotifyLevel = "info" | "warning" | "error";
 
+/** Outcome of `runNow`: unknown loop, agent busy, or an iteration was delivered. */
+export type RunNowOutcome = "ran" | "busy" | "missing";
+
 export interface LoopEngineHost {
 	/** The agent is mid-run (streaming, compacting, retrying, or has queued work). */
 	isBusy(): boolean;
@@ -118,10 +121,6 @@ export class LoopEngine {
 		return this.loops.length === 0;
 	}
 
-	hasActive(): boolean {
-		return this.loops.some((loop) => !loop.paused);
-	}
-
 	// ---------------------------------------------------------------- lifecycle
 
 	start(input: StartLoopInput): LoopRecord {
@@ -202,6 +201,31 @@ export class LoopEngine {
 			this.arm();
 		}
 		return targets;
+	}
+
+	/**
+	 * Run one iteration of a loop right now, off its schedule.
+	 *
+	 * This exists for the panel's "Run now": an iteration that was missed, or a nudge after a
+	 * conversation left the loop alone. `nextAt`, the skip counters, and the paused state are all
+	 * left untouched, so a manual run neither resets the rhythm nor hides an iteration that was
+	 * skipped. A busy agent skips instead of queueing, exactly like a scheduled iteration.
+	 */
+	runNow(id: string, now = this.clock.now()): RunNowOutcome {
+		if (this.disposed) return "missing";
+		const loop = this.get(id);
+		if (!loop) return "missing";
+		if (this.host.isBusy()) return "busy";
+
+		loop.runs++;
+		// A real iteration ends a skip streak, the same as a scheduled run does.
+		loop.consecutiveSkips = 0;
+		loop.lastRunAt = now;
+		this.lastFiredId = loop.id;
+		this.host.onBeforeInject?.(loop);
+		this.host.inject(loop);
+		this.host.onChange("run");
+		return "ran";
 	}
 
 	/** Loops paused by the agent, i.e. the ones a user reply should resume. */

@@ -43,6 +43,19 @@ describe("composeStatus", () => {
 		expect(composeStatus([loop({ paused: "agent" })], NOW)).toBe("LOOP 1 paused (agent)");
 	});
 
+	it("counts only the other running loops as `more`", () => {
+		// A paused loop is already reported by its own field. Counting it as `more` as well made a
+		// two-loop footer read like three loops.
+		const status = composeStatus([loop({ runs: 2 }), loop({ id: "l2", paused: "user" })], NOW);
+		expect(status).not.toContain("more");
+		expect(status).toContain("1 paused");
+	});
+
+	it("words the interval the same way the panel does", () => {
+		// The footer said `every 24h` where the panel said `every 1d` for the same loop.
+		expect(composeStatus([loop({ intervalMs: 86_400_000 })], NOW)).toContain("every 1d");
+	});
+
 	it("mentions paused loops next to the active countdown", () => {
 		const status = composeStatus([loop({ runs: 2 }), loop({ id: "l2", paused: "user" })], NOW);
 		expect(status).toContain("⟳ LOOP l1");

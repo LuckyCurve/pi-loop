@@ -17,6 +17,8 @@ export type PanelAction =
 	| { kind: "close" }
 	/** Disable (pause) or enable (resume) a loop. */
 	| { kind: "toggle"; id: string; enable: boolean }
+	/** Run one iteration now, off the loop's schedule. */
+	| { kind: "run"; id: string }
 	/** Delete a loop. */
 	| { kind: "remove"; id: string }
 	/** Return to the loop list without changing anything. */
@@ -81,9 +83,23 @@ function counters(loop: LoopRecord): string[] {
 	return parts;
 }
 
-/** Heading for the action dialog, so it says which loop it is about. */
-export function loopHeading(loop: LoopRecord): string {
-	return `${loop.id} · ${preview(loop.prompt, 40)}`;
+/**
+ * One-line status for a loop: identity, schedule, state. Short by construction, because this is what
+ * the panel draws into its box border as the caption — a prompt is arbitrary text, and a long one
+ * filling that line leaves no border at all. The prompt belongs in `loopDetail`.
+ */
+export function loopHeading(loop: LoopRecord, now: number): string {
+	const base = `${loop.id} · every ${formatDuration(loop.intervalMs)}`;
+	return loop.paused ? `${base} · ${stateLabel(loop)}` : `${base} · ${countdownLabel(loop.nextAt - now)}`;
+}
+
+/**
+ * The loop in full: why it is stopped (if it is) and the prompt. Rendered as wrapped body text inside
+ * the panel, which is the only place a long prompt can be read.
+ */
+export function loopDetail(loop: LoopRecord): string {
+	const why = loop.paused ? [pauseLabel(loop), loop.breakReason].filter(Boolean).join(": ") : "";
+	return [why, loop.prompt.trim()].filter(Boolean).join("\n");
 }
 
 /** One row per loop plus the row that leaves the panel. */
@@ -112,6 +128,8 @@ export function actionOptions(loop: LoopRecord): PanelOption[] {
 		loop.paused
 			? { value: "enable", label: "Enable", description: "", action: { kind: "toggle", id: loop.id, enable: true } }
 			: { value: "disable", label: "Disable", description: "", action: { kind: "toggle", id: loop.id, enable: false } },
+		// Offered for every loop, including a stopped one: a one-off run is a nudge, not a resume.
+		{ value: "run", label: "Run now", description: "", action: { kind: "run", id: loop.id } },
 		{ value: "remove", label: "Remove", description: "", action: { kind: "remove", id: loop.id } },
 		{ value: "back", label: "Back", description: "", action: { kind: "back" } },
 	];

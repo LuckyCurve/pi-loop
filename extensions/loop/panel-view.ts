@@ -8,12 +8,16 @@
  *    full-width padding is what makes the overlay opaque.
  * 2. **It repaints on a timer.** Rows carry a countdown, and pi only repaints on input and events,
  *    so without a tick the countdown would freeze at whatever it read when the panel opened.
+ * 3. **It has a detail block.** A row can only show a slice of a prompt, and the box caption is part
+ *    of the border, so neither can hold arbitrary text. The selected item's full text goes here,
+ *    wrapped, above the rows.
  */
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
 	SelectList,
 	truncateToWidth,
 	visibleWidth,
+	wrapTextWithAnsi,
 	type Component,
 	type OverlayOptions,
 } from "@earendil-works/pi-tui";
@@ -28,6 +32,15 @@ const MAX_VISIBLE_ROWS = 12;
 
 /** Lines the box spends on its own chrome: top border, key hints, bottom border. */
 const CHROME_LINES = 3;
+
+/** Blank line between the detail block and the rows. */
+const DETAIL_GAP_LINES = 1;
+
+/** The detail block never takes more than this share of the box, so the list stays usable. */
+const DETAIL_SHARE = 0.5;
+
+/** Indented to line up with row text. */
+const DETAIL_INDENT = "  ";
 
 /**
  * Geometry of the overlay, in one place: the options the overlay is opened with and the row budget
@@ -63,6 +76,11 @@ export interface PanelViewInput {
 	title: () => string;
 	/** Key hints, already themed. Composed by the caller, which has pi's keybinding labels. */
 	hint: string;
+	/**
+	 * Full text for the highlighted item, wrapped into a block above the rows. `undefined` renders no
+	 * block. For an action dialog the selection is an action, not the subject, so ignore the value.
+	 */
+	intro?: (selectedValue: string | undefined) => string | undefined;
 	/** Repaint cadence. 0 keeps a static box, for a dialog whose rows cannot change. */
 	refreshMs?: number;
 	/**
@@ -91,18 +109,18 @@ export function createPanelView(input: PanelViewInput): PanelView {
 	let disposed = false;
 
 	/**
-	 * Rows the box can show: what the height allows, minus its own chrome — and minus one more line
-	 * once the list scrolls, because `SelectList` spends a line on its `(3/12)` indicator.
+	 * Rows to show within `budget` lines. `SelectList` spends one of them on its `(3/12)` indicator
+	 * once the list scrolls, so that line has to be accounted for here.
 	 */
-	function visibleRows(itemCount: number): number {
-		const budget = Math.max(1, Math.floor(input.maxLines()));
-		const room = Math.max(1, Math.min(MAX_VISIBLE_ROWS, budget - CHROME_LINES));
-		return itemCount > room ? Math.max(1, room - 1) : room;
+	function visibleRows(itemCount: number, budget: number): number {
+		const room = Math.min(itemCount, MAX_VISIBLE_ROWS);
+		if (room <= budget) return room;
+		return Math.max(1, budget - 1);
 	}
 
-	function build(rows: readonly PanelOption[], keepValue: string | undefined): SelectList {
+	function build(rows: readonly PanelOption[], keepValue: string | undefined, budget: number): SelectList {
 		const items = rows.map((row) => ({ value: row.value, label: row.label, description: row.description }));
-		const list = new SelectList(items, visibleRows(items.length), {
+		const list = new SelectList(items, visibleRows(items.length, budget), {
 			selectedPrefix: (text) => theme.fg("accent", text),
 			selectedText: (text) => theme.fg("accent", text),
 			description: (text) => theme.fg("muted", text),
@@ -135,21 +153,62 @@ export function createPanelView(input: PanelViewInput): PanelView {
 		}, refreshMs);
 	}
 
-	let list = build(rows(), undefined);
+	/**
+	 * The detail block for the selected item: its full text, wrapped, capped to a share of the room,
+	 * and indented like row text. A cut is marked, because quietly showing part of a prompt is what
+	 * the caption used to do.
+	 *
+	 * The block is the same height for every item in a dialog — the tallest one's — so arrowing
+	 * between loops does not make the list jump.
+	 */
+	function detailBlock(
+		items: readonly PanelOption[],
+		selected: string | undefined,
+		width: number,
+		available: number,
+	): { lines: string[]; outerLines: number } {
+		if (!input.intro) return { lines: [], outerLines: 0 };
+		const textWidth = Math.max(1, width - DETAIL_INDENT.length);
+		const wrap = (text: string): string[] => wrapTextWithAnsi(text, textWidth);
+
+		const details = items.map((item) => input.intro?.(item.value)).filter((text): text is string => Boolean(text));
+		if (details.length === 0) return { lines: [], outerLines: 0 };
+
+		const cap = Math.max(1, Math.floor(available * DETAIL_SHARE));
+		const tallest = Math.max(...details.map((text) => wrap(text).length));
+		const height = Math.min(cap, tallest);
+
+		const selectedText = selected === undefined ? undefined : input.intro(selected);
+		const shown = (selectedText ? wrap(selectedText) : []).slice(0, height);
+		if (shown.length < height) shown.push(...Array.from({ length: height - shown.length }, () => ""));
+		if (selectedText && wrap(selectedText).length > height) {
+			shown[height - 1] = `${truncateToWidth(shown[height - 1]!, Math.max(0, textWidth - 1), "")}…`;
+		}
+
+		const lines = shown.map((line) => DETAIL_INDENT + truncateToWidth(line, textWidth, "…"));
+		return { lines: [...lines, ""], outerLines: lines.length + DETAIL_GAP_LINES };
+	}
+
+	let list = build(rows(), undefined, MAX_VISIBLE_ROWS);
 	arm();
 
 	return {
 		render(width: number): string[] {
-			list = build(rows(), list.getSelectedItem()?.value);
 			const inner = Math.max(1, width - 2);
-			const body = list.render(inner);
-			return frame([...body, input.hint], width, input.title(), theme);
+			const available = Math.max(1, Math.floor(input.maxLines()) - CHROME_LINES);
+			const items = rows();
+			const selected = list.getSelectedItem()?.value;
+			const detail = detailBlock(items, selected, inner, available);
+			list = build(items, selected, Math.max(1, available - detail.outerLines));
+			return frame([...detail.lines, ...list.render(inner), input.hint], width, input.title(), theme);
 		},
 		invalidate(): void {
 			list.invalidate();
 		},
 		handleInput(data: string): void {
 			list.handleInput(data);
+			// The detail block follows the cursor, so a selection change needs a repaint.
+			input.requestRender();
 		},
 		dispose(): void {
 			disposed = true;

@@ -48,11 +48,20 @@ Two forms, nothing else:
 | `/loop` | Open the management panel: see, disable, or remove loops |
 
 There are no management subcommands — no `list`, `stop`, `pause`, or `resume` to remember. A bare
-`/loop` opens a panel in the middle of the screen with a row per loop: schedule and state on the
-left, counters and the prompt on the right. Selecting a row offers **Disable** (a pause, resumable),
-**Remove**, and **Back**; the panel itself closes with **Close** or Esc. Nothing running means no
-popup at all, just a short "No loops are running." Everything else is a plain prompt:
-`/loop stop the deploy check` starts a loop, it does not stop one.
+`/loop` opens a panel in the middle of the screen: a row per loop with its schedule, state, and
+counters, and the highlighted loop's prompt in full underneath, wrapped. Selecting a row offers:
+
+| Action | What it does |
+|---|---|
+| **Disable** / **Enable** | Pause the loop, or start it again. A disable is reversible; nothing is lost. |
+| **Run now** | One iteration straight away. Skipped if the agent is busy, and the schedule is left exactly as it was. |
+| **Remove** | Delete the loop. |
+| **Back** | Return to the list. |
+
+A prompt can be any length, so the panel never puts one in the box caption — that is a status line —
+and wraps the full text into the body instead. Nothing running means no popup at all, just a short
+"No loops are running." Everything else is a plain prompt: `/loop stop the deploy check` starts a
+loop, it does not stop one.
 
 The panel is a centered overlay with its own frame, not a selector sitting in the editor at the
 bottom of the screen, and its countdown ticks while it is open instead of freezing at whatever it
@@ -141,6 +150,7 @@ The scheduling rules have no dependency on pi, which is what makes them testable
 | File | Responsibility |
 |---|---|
 | `extensions/loop/index.ts` | pi wiring: commands, the `loop_break` tool, session lifecycle |
+| `extensions/loop/panel-view.ts` | the panel as a terminal component: the box, its repaint timer, its height budget |
 | `src/engine.ts` | scheduling, skipping, pausing, persistence — pure logic |
 | `src/duration.ts` | interval parsing and formatting |
 | `src/commands.ts` | `/loop` argument grammar, prompt framing, injection detection |
@@ -154,7 +164,7 @@ This project is developed test-first. See [AGENTS.md](AGENTS.md) for the working
 
 ```bash
 npm install
-npm test          # 135 tests
+npm test          # 157 tests
 npm run typecheck
 ```
 
@@ -168,7 +178,10 @@ Test layers, cheapest first:
   the fakes cannot: iterations are not queued behind a running turn, prompts sent with
   `expandPromptTemplates: false` reach the model as text, `loop_break` is declared exactly while a
   loop exists, and a real user message resumes an agent-paused loop
-- `tests/panel.test.ts` — the panel's rows and the action each one dispatches
+- `tests/panel.test.ts`, `tests/panel-view.test.ts` — the panel as data (rows and actions), then the
+  box that frames it and repaints its countdown
+- `tests/status.test.ts` — the footer line, including how it summarises several loops
+- `tests/language.test.ts` — no Chinese anywhere in `src/` or `extensions/`
 - `tests/session-scope.test.ts` — real-runtime session scope: a resumed session stays inert while
   `/reload` restores
 - `tests/isolation.test.ts` — the loader configuration every test uses, so `npm test` never loads

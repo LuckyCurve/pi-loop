@@ -41,7 +41,16 @@ pi -e ./extensions/loop/index.ts            # 临时试用，无需安装
 | `/loop <prompt>` | 不写间隔：使用 `defaultIntervalMs`（默认 10 分钟） |
 | `/loop` | 打开管理面板：查看、禁用、删除循环 |
 
-没有管理子命令 —— 不需要记 `list`、`stop`、`pause`、`resume`。单独输入 `/loop` 会在**屏幕中间**弹出面板：每个循环一行，左侧是间隔与状态，右侧是次数与 prompt。选中某行后可选 **Disable**（暂停，可恢复）、**Remove**、**Back**；面板本身用 **Close** 或 Esc 退出。没有循环时不弹窗，只提示 `No loops are running.`。其余一切都会被当成 prompt：`/loop stop the deploy check` 是启动一个循环，不是停止循环。
+没有管理子命令 —— 不需要记 `list`、`stop`、`pause`、`resume`。单独输入 `/loop` 会在**屏幕中间**弹出面板：每个循环一行（间隔、状态、次数），下方完整显示当前高亮那个循环的 prompt（自动换行）。选中某行后可选：
+
+| 操作 | 说明 |
+|---|---|
+| **Disable** / **Enable** | 暂停循环，或重新开始。禁用可逆，不丢东西。 |
+| **Run now** | 立即执行一次。Agent 正在运行就跳过，且**完全不影响原有定时**。 |
+| **Remove** | 删除循环。 |
+| **Back** | 返回列表。 |
+
+prompt 长度不限，所以它永远不会被放进弹窗标题（标题是状态行），而是换行显示在框内正文里。没有循环时不弹窗，只提示 `No loops are running.`。其余一切都会被当成 prompt：`/loop stop the deploy check` 是启动一个循环，不是停止循环。
 
 面板是带边框的居中弹窗（不是编辑器底部那种选择器），打开期间倒计时会自己跳动，不会停在打开那一刻的时间上。
 
@@ -113,6 +122,7 @@ pi -e ./extensions/loop/index.ts            # 临时试用，无需安装
 | 文件 | 职责 |
 |---|---|
 | `extensions/loop/index.ts` | pi 接线：命令、`loop_break` 工具、会话生命周期 |
+| `extensions/loop/panel-view.ts` | 面板的终端组件：盒子、自己的重绘定时器、高度预算 |
 | `src/engine.ts` | 调度、跳过、暂停、持久化 —— 纯逻辑 |
 | `src/duration.ts` | 间隔解析与格式化 |
 | `src/commands.ts` | `/loop` 参数语法、prompt 包装、注入识别 |
@@ -126,7 +136,7 @@ pi -e ./extensions/loop/index.ts            # 临时试用，无需安装
 
 ```bash
 npm install
-npm test          # 135 个测试
+npm test          # 157 个测试
 npm run typecheck
 ```
 
@@ -138,7 +148,9 @@ npm run typecheck
 - `tests/activation.test.ts` —— 真实运行时回归：`loop_break` 仅在存在循环时暴露，循环在运行中途结束时也能正确撤下
 - `tests/triage.test.ts` —— 缺陷单分流工作流的端到端验证
 - `tests/live.test.ts` —— 真实模型跑 `/loop`；未配置 provider 时自动跳过
-- `tests/panel.test.ts` —— 面板的行，以及每行派发的动作
+- `tests/panel.test.ts`、`tests/panel-view.test.ts` —— 先是面板的数据（行与动作），再是框住它的盒子与自刷新倒计时
+- `tests/status.test.ts` —— 状态栏，含多条循环时的汇总口径
+- `tests/language.test.ts` —— `src/` 与 `extensions/` 里不得出现中文
 - `tests/session-scope.test.ts` —— 真实运行时的会话作用域：恢复会话保持静止，`/reload` 才恢复
 - `tests/isolation.test.ts` —— 所有测试共用的 loader 配置，保证 `npm test` 不会加载开发者本机安装的扩展
 

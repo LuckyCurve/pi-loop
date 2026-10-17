@@ -19,13 +19,15 @@ import { FakeClock } from "./helpers/fake-clock.ts";
 
 const THEME = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as never;
 const HINT = "↑↓ navigate  Enter select  Esc cancel";
+/** Arrow-down as the terminal sends it. Spelled out because a literal escape is easy to mangle. */
+const DOWN = String.fromCharCode(27) + "[B";
 
 function option(value: string, label: string): PanelOption {
 	return { value, label, description: "desc", action: { kind: "open", id: value } };
 }
 
 /** Only the styling and geometry knobs are overridable; the callbacks are wired by the harness. */
-type Overridable = Pick<Parameters<typeof createPanelView>[0], "refreshMs">;
+type Overridable = Pick<Parameters<typeof createPanelView>[0], "refreshMs" | "intro">;
 
 function makeView(overrides: Overridable = {}) {
 	const clock = new FakeClock(1_000_000);
@@ -42,6 +44,7 @@ function makeView(overrides: Overridable = {}) {
 		title: () => `Loops (${rows.length})`,
 		hint: HINT,
 		maxLines: () => maxLines,
+		intro: overrides.intro,
 		requestRender: () => repaints.push(clock.now()),
 		onSelect: (value) => selections.push(value),
 		onCancel: () => cancels.push(clock.now()),
@@ -64,6 +67,9 @@ function makeView(overrides: Overridable = {}) {
 }
 
 const render = (view: { render(width: number): string[] }, width = 40): string[] => view.render(width);
+
+const manyRows = (count: number): PanelOption[] =>
+	Array.from({ length: count }, (_, index) => option(`l${index + 1}`, `l${index + 1} · every 5m · next 2m30s`));
 
 describe("panel view box", () => {
 	it("frames the rows so the overlay has an edge", () => {
@@ -109,10 +115,77 @@ describe("panel view box", () => {
 	});
 });
 
-describe("panel view height", () => {
-	const manyRows = (count: number): PanelOption[] =>
-		Array.from({ length: count }, (_, index) => option(`l${index + 1}`, `l${index + 1} · every 5m · next 2m30s`));
+describe("panel view detail block", () => {
+	it("shows the whole prompt above the list, so a long one is readable", () => {
+		const prompt = "a prompt line that would never fit in one row";
+		const h = makeView({ intro: () => prompt });
+		const lines = render(h.view, 60);
+		const body = lines.join(String.fromCharCode(10));
+		expect(body).toContain("a prompt line");
+		// Above the rows, not below them.
+		const firstRow = lines.findIndex((line) => line.includes("l1 ·"));
+		const intro = lines.findIndex((line) => line.includes("a prompt line"));
+		expect(intro).toBeGreaterThan(0);
+		expect(intro).toBeLessThan(firstRow);
+	});
 
+	it("wraps a long prompt over several lines instead of truncating it", () => {
+		const h = makeView({ intro: () => "alpha bravo charlie delta echo foxtrot golf hotel india juliet" });
+		const lines = render(h.view, 30);
+		const wrapped = lines.filter((line) => /alpha|charlie|foxtrot|juliet/.test(line));
+		expect(wrapped.length).toBeGreaterThan(2);
+		// Every line still fits the box, so nothing spills past the border.
+		for (const line of lines) expect(visibleWidth(line)).toBe(30);
+	});
+
+	it("follows the highlighted row, so the detail is never stale", () => {
+		const h = makeView({ intro: (value) => `detail of ${value}` });
+		expect(render(h.view).join(String.fromCharCode(10))).toContain("detail of l1");
+		h.view.handleInput(DOWN);
+		expect(render(h.view).join(String.fromCharCode(10))).toContain("detail of l2");
+	});
+
+	it("marks a prompt it had to cut short", () => {
+		const h = makeView({ intro: () => "word ".repeat(300) });
+		h.setMaxLines(9);
+		const lines = render(h.view, 40);
+		expect(lines.some((line) => line.includes("…"))).toBe(true);
+	});
+
+	it("keeps one block height for the whole dialog, so the list does not jump", () => {
+		// One item with a long detail and one with a short one. The block is sized to the tall one
+		// for both, so arrowing does not move the rows.
+		const h = makeView({
+			intro: (value) => (value === "l1" ? "a long detail that wraps over several lines in this box" : "short"),
+		});
+		const atFirst = render(h.view, 30);
+		h.view.handleInput(DOWN);
+		const atSecond = render(h.view, 30);
+
+		expect(atSecond.length, "the box keeps its height").toBe(atFirst.length);
+		// The *rows* must not shift. Comparing the cursor's line would pass for the wrong reason:
+		// the cursor is supposed to move.
+		const firstRow = (lines: string[]) => lines.findIndex((line) => line.includes("l1 ·"));
+		expect(firstRow(atSecond), "the list does not jump when the detail changes").toBe(firstRow(atFirst));
+	});
+
+	it("adds no blank separator when there is no detail", () => {
+		const withIntro = render(makeView({ intro: () => "something" }).view).length;
+		const without = render(makeView({ intro: () => undefined }).view).length;
+		expect(without).toBeLessThan(withIntro);
+	});
+
+	it("keeps the box inside its budget with a long detail block", () => {
+		const h = makeView({ intro: () => "word ".repeat(200) });
+		h.setRows(manyRows(20));
+		h.setMaxLines(12);
+		const lines = render(h.view);
+		expect(lines.length).toBeLessThanOrEqual(12);
+		expect(lines.at(-1)!.startsWith("╰")).toBe(true);
+	});
+});
+
+describe("panel view height", () => {
 	it("mirrors how pi clamps an overlay's maxHeight", () => {
 		// 80% of the terminal, never more than the space left after the margins.
 		expect(panelLineBudget(40)).toBe(32);

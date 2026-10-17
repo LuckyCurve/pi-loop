@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { LoopRecord } from "../src/engine.ts";
-import { actionOptions, countdownLabel, loopOptions, noLoopsMessage, optionTitle } from "../src/panel.ts";
+import {
+	actionOptions,
+	countdownLabel,
+	loopDetail,
+	loopHeading,
+	loopOptions,
+	noLoopsMessage,
+	optionTitle,
+} from "../src/panel.ts";
 
 const NOW = 1_000_000;
 
@@ -33,6 +41,41 @@ describe("countdownLabel", () => {
 	it("says so when the run is due now", () => {
 		expect(countdownLabel(0)).toBe("due now");
 		expect(countdownLabel(400)).toBe("due now");
+	});
+});
+
+describe("loopHeading", () => {
+	it("is one short status line, because it is drawn into the box border", () => {
+		expect(loopHeading(loop(), NOW)).toBe("l1 · every 5m · next 2m30s");
+	});
+
+	it("never lets a prompt reach the caption", () => {
+		// A prompt is arbitrary text. Drawn into the border it eats the whole line, which is exactly
+		// how a 300-character instruction left the panel with no top border.
+		const heading = loopHeading(loop({ prompt: "x".repeat(300) }), NOW);
+		expect(heading).not.toContain("xxx");
+		expect(heading.length).toBeLessThan(40);
+	});
+
+	it("names the state instead of a countdown while a loop is stopped", () => {
+		expect(loopHeading(loop({ paused: "agent" }), NOW)).toBe("l1 · every 5m · paused");
+		expect(loopHeading(loop({ paused: "user" }), NOW)).toBe("l1 · every 5m · disabled");
+	});
+});
+
+describe("loopDetail", () => {
+	it("carries the prompt in full, so a long one is readable somewhere", () => {
+		const prompt = "y".repeat(300);
+		expect(loopDetail(loop({ prompt }))).toBe(prompt);
+	});
+
+	it("leads with why a stopped loop stopped", () => {
+		const nl = String.fromCharCode(10);
+		expect(loopDetail(loop({ paused: "agent", breakReason: "which env?" }))).toBe(
+			`waiting for your answer: which env?${nl}check the deploy`,
+		);
+		expect(loopDetail(loop({ paused: "user" }))).toBe(`disabled by you${nl}check the deploy`);
+		expect(loopDetail(loop({ paused: "agent" }))).toBe(`waiting for your answer${nl}check the deploy`);
 	});
 });
 
@@ -95,17 +138,27 @@ describe("loopOptions", () => {
 });
 
 describe("actionOptions", () => {
-	it("offers disable, remove, and back for a running loop", () => {
+	it("offers disable, run now, remove, and back for a running loop", () => {
 		const options = actionOptions(loop());
-		expect(options.map((option) => option.label)).toEqual(["Disable", "Remove", "Back"]);
+		expect(options.map((option) => option.label)).toEqual(["Disable", "Run now", "Remove", "Back"]);
 		expect(options[0]!.action).toEqual({ kind: "toggle", id: "l1", enable: false });
-		expect(options[1]!.action).toEqual({ kind: "remove", id: "l1" });
-		expect(options[2]!.action).toEqual({ kind: "back" });
+		expect(options[1]!.action).toEqual({ kind: "run", id: "l1" });
+		expect(options[2]!.action).toEqual({ kind: "remove", id: "l1" });
+		expect(options[3]!.action).toEqual({ kind: "back" });
 	});
 
 	it("offers enable instead of disable for a paused loop", () => {
 		const options = actionOptions(loop({ paused: "agent" }));
 		expect(options[0]!.label).toBe("Enable");
 		expect(options[0]!.action).toEqual({ kind: "toggle", id: "l1", enable: true });
+	});
+
+	it("offers a one-off run for both a running and a paused loop", () => {
+		// Escaping the panel used to be the only way out of a missed iteration; running it now is an
+		// explicit action that leaves the schedule alone.
+		for (const state of [{}, { paused: "agent" as const }, { paused: "user" as const }]) {
+			const run = actionOptions(loop(state)).find((option) => option.label === "Run now");
+			expect(run?.action).toEqual({ kind: "run", id: "l1" });
+		}
 	});
 });

@@ -89,6 +89,13 @@ by running against real pi rather than by reading docs:
   bottom; without the frame and padding, the overlay composites against the transcript behind it and
   has no edge. No row changes either way, so nothing else would notice:
   `tests/helpers/scripted-ui.ts` records the option and `tests/panel-view.test.ts` pins the box.
+- **The caption is a status line, never the prompt.** `loopHeading` is short by construction; the
+  prompt reaches the panel through `loopDetail`, wrapped into the detail block below the rows. A
+  prompt drawn into the border has no length limit and eats the whole line, leaving the box with no
+  top edge. `tests/panel.test.ts` asserts the caption cannot contain a prompt.
+- **Run now is a nudge, not a resume.** `LoopEngine.runNow` injects one iteration and leaves `nextAt`,
+  the skip counters, and the paused state untouched, so a manual run never resets the rhythm or hides
+  a missed iteration. It skips while the agent is busy, like any other iteration.
 - **The panel repaints itself.** pi only repaints on input and events, so a countdown in an open
   overlay freezes unless a timer asks for a repaint. `panel-view.ts` owns that timer and clears it
   from `dispose()`, which pi calls when the dialog closes.

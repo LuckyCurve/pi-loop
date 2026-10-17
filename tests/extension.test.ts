@@ -85,8 +85,8 @@ interface Harness {
 	setNoUI(value: boolean): void;
 	/** Queue answers for the dialogs the extension opens, in call order. */
 	queueSelect(...answers: (string | undefined)[]): void;
-	/** Every dialog the extension showed, with the rows it rendered. */
-	selects: { title: string; options: string[] }[];
+	/** Every dialog the extension showed: caption, rendered body, and rows. */
+	selects: { title: string; body: string[]; rows: string[] }[];
 	/** How each custom dialog was presented (overlay + anchor). */
 	presentation: { overlay: boolean; anchor: string | undefined }[];
 }
@@ -313,10 +313,12 @@ describe("loop extension", () => {
 
 		// The panel lists the loop, not the usage text: the popup is the primary surface.
 		expect(h.selects[0]!.title).toBe("Loops (1)");
-		expect(h.selects[0]!.options[0]).toContain("l1");
-		expect(h.selects[0]!.options[0]).toContain("every 5m");
-		expect(h.selects[0]!.options[0]).toContain("check the deploy");
-		expect(h.selects[0]!.options.at(-1)).toBe("Close");
+		expect(h.selects[0]!.rows[0]).toContain("l1");
+		expect(h.selects[0]!.rows[0]).toContain("every 5m");
+		expect(h.selects[0]!.rows.at(-1)).toBe("Close");
+		// The prompt is body text, not a row and not the caption.
+		expect(h.selects[0]!.body.join(String.fromCharCode(10))).toContain("check the deploy");
+		expect(h.selects[0]!.title).not.toContain("check the deploy");
 		expect(h.editorTexts).toHaveLength(0);
 	});
 
@@ -336,7 +338,7 @@ describe("loop extension", () => {
 		h.queueSelect("l1", "Remove");
 		await h.invokeCommand("");
 
-		expect(h.selects[1]!.options).toEqual(["Disable", "Remove", "Back"]);
+		expect(h.selects[1]!.rows).toEqual(["Disable", "Run now", "Remove", "Back"]);
 		expect(h.notifications.at(-1)!.message).toMatch(/Removed 1/);
 		expect(h.tools).not.toContain(BREAK_TOOL_NAME);
 		expect(h.clock.pending).toBe(0);
@@ -357,10 +359,42 @@ describe("loop extension", () => {
 		h.queueSelect("l1", "Enable");
 		await h.invokeCommand("");
 		// The action selector for a paused loop offers Enable, not Disable.
-		expect(h.selects[before + 1]!.options).toEqual(["Enable", "Remove", "Back"]);
+		expect(h.selects[before + 1]!.rows).toEqual(["Enable", "Run now", "Remove", "Back"]);
 		expect(h.notifications.at(-1)!.message).toMatch(/Enabled 1/);
 		h.clock.advance(300_000);
 		expect(h.sent).toHaveLength(2);
+	});
+
+	it("runs a loop immediately from the panel without moving its schedule", async () => {
+		const h = await startedHarness();
+		const scheduled = (h.entries.at(-1)!.data as { loops: { nextAt: number }[] }).loops[0]!.nextAt;
+
+		h.queueSelect("l1", "Run now");
+		await h.invokeCommand("");
+
+		expect(h.selects[1]!.rows).toEqual(["Disable", "Run now", "Remove", "Back"]);
+		expect(h.sent).toHaveLength(2);
+		expect(h.sent[1]).toContain("check the deploy");
+		expect(h.notifications.at(-1)!.message).toMatch(/Ran loop l1 now/);
+		const after = (h.entries.at(-1)!.data as { loops: { nextAt: number }[] }).loops[0]!.nextAt;
+		expect(after, "a manual run must not reschedule the loop").toBe(scheduled);
+
+		// The clock keeps its own rhythm: the next scheduled iteration is still one interval away.
+		h.clock.advance(299_999);
+		expect(h.sent).toHaveLength(2);
+		h.clock.advance(1);
+		expect(h.sent).toHaveLength(3);
+	});
+
+	it("skips a manual run while the agent is busy and says so", async () => {
+		const h = await startedHarness();
+		h.setBusy(true);
+
+		h.queueSelect("l1", "Run now");
+		await h.invokeCommand("");
+
+		expect(h.sent, "a manual run must not queue behind a running turn").toHaveLength(1);
+		expect(h.notifications.at(-1)!.message).toMatch(/still running/);
 	});
 
 	it("leaves everything alone when the panel is dismissed", async () => {
