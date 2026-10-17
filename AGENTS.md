@@ -99,6 +99,12 @@ by running against real pi rather than by reading docs:
 - **The panel repaints itself.** pi only repaints on input and events, so a countdown in an open
   overlay freezes unless a timer asks for a repaint. `panel-view.ts` owns that timer and clears it
   from `dispose()`, which pi calls when the dialog closes.
+- **The extension owns the panel it opened.** pi calls `dispose()` when a dialog closes normally, but
+  its teardown path only *hides* the overlay, so a panel open across a session switch would leave a
+  repaint timer running for the life of the process. `disposeEngine()` disposes it too.
+- **Never display a value nothing repaints.** Both the footer and the panel show countdowns; when the
+  refresh that would tick one is switched off (`statusRefreshMs: 0`), the countdown has to go with
+  it. A frozen number keeps claiming a time that has already passed.
 - **User-facing text is English.** Commands, the panel, notifications, and the status line are all
   English; Chinese lives only in `README.zh-CN.md`. A mixed message (an English prefix in front of a
   Chinese `reason`) is what this avoids; do not reintroduce per-string translations.
