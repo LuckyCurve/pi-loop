@@ -43,6 +43,8 @@ pi -e ./extensions/loop/index.ts            # 临时试用，无需安装
 
 没有管理子命令 —— 不需要记 `list`、`stop`、`pause`、`resume`。单独输入 `/loop` 会在**屏幕中间**弹出面板：每个循环一行，左侧是间隔与状态，右侧是次数与 prompt。选中某行后可选 **Disable**（暂停，可恢复）、**Remove**、**Back**；面板本身用 **Close** 或 Esc 退出。没有循环时不弹窗，只提示 `No loops are running.`。其余一切都会被当成 prompt：`/loop stop the deploy check` 是启动一个循环，不是停止循环。
 
+面板是带边框的居中弹窗（不是编辑器底部那种选择器），打开期间倒计时会自己跳动，不会停在打开那一刻的时间上。
+
 界面文案一律英文（见下方「界面语言」）。
 
 面板只显示**当前会话**的循环。关闭会话、切换会话或 fork 之后，它就什么都没有了 —— 那些循环是没了，不是被藏起来了。
@@ -124,7 +126,7 @@ pi -e ./extensions/loop/index.ts            # 临时试用，无需安装
 
 ```bash
 npm install
-npm test          # 114 个测试
+npm test          # 135 个测试
 npm run typecheck
 ```
 
@@ -142,7 +144,7 @@ npm run typecheck
 
 ## 界面语言
 
-pi 里的一切用户可见文案都是英文：命令描述、面板、通知、状态栏。中文只出现在本文档里。这样可以避免同一条消息里出现两种语言（Agent 给出的 `reason` 是中文时尤其明显），也不需要维护一套翻译。
+pi 里的一切用户可见文案都是英文：命令描述、面板、通知、状态栏。中文只出现在本文档里。这样可以避免同一条消息里出现两种语言（Agent 给出的 `reason` 是中文时尤其明显），也不需要维护一套翻译。`tests/language.test.ts` 会扫描 `src/` 与 `extensions/` 强制这条规则 —— 它曾经漏检过一次。
 
 ## 与 Claude Code `/loop` 的差异
 

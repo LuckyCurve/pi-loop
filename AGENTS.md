@@ -37,7 +37,8 @@ Pick the cheapest layer that can actually fail for the reason you care about:
 | Activation | `tests/activation.test.ts` | Which tools the model is actually offered, asserted against the real runtime. |
 | Workflow | `tests/triage.test.ts` | The end-to-end user story the feature exists for. |
 | Real model | `tests/live.test.ts` | A genuine model iterating a loop. Skips itself with no provider configured. |
-| Panel | `tests/panel.test.ts` | The management panel's rows and the action each one dispatches. Pure data, no pi. |
+| Panel | `tests/panel.test.ts`, `tests/panel-view.test.ts` | The management panel: its rows and actions as data, then the box that frames them and repaints its countdown. No pi session. |
+| Language | `tests/language.test.ts` | No Chinese anywhere in `src/` or `extensions/`. |
 | Session scope | `tests/session-scope.test.ts` | A resumed session stays inert; `/reload` restores. Real runtime, because it depends on pi's branch reconstruction. |
 | Isolation | `tests/isolation.test.ts` | Every test helper loads this extension and nothing else. |
 
@@ -82,13 +83,20 @@ by running against real pi rather than by reading docs:
   everything else is a prompt. The panel is a `SelectList` in interactive mode (schedule on the left,
   prompt on the right) and `ctx.ui.select()` everywhere else, because RPC cannot render custom
   components. Both paths dispatch the same `src/panel.ts` actions.
-- **The panel is a centered overlay.** It opens with `ctx.ui.custom(factory, { overlay: true,
-  overlayOptions: { anchor: "center" } })`. Without `overlay`, `custom()` renders in the editor slot
-  at the bottom, which reads like an afterthought — and no row would change, so nothing else would
-  notice. `tests/helpers/scripted-ui.ts` records the option so this is asserted.
+- **The panel is a framed, centered overlay.** It opens with `ctx.ui.custom(factory, { overlay: true,
+  overlayOptions: { anchor: "center" } })`, and `extensions/loop/panel-view.ts` draws the frame and
+  pads every line to the box width. Without `overlay`, `custom()` renders in the editor slot at the
+  bottom; without the frame and padding, the overlay composites against the transcript behind it and
+  has no edge. No row changes either way, so nothing else would notice:
+  `tests/helpers/scripted-ui.ts` records the option and `tests/panel-view.test.ts` pins the box.
+- **The panel repaints itself.** pi only repaints on input and events, so a countdown in an open
+  overlay freezes unless a timer asks for a repaint. `panel-view.ts` owns that timer and clears it
+  from `dispose()`, which pi calls when the dialog closes.
 - **User-facing text is English.** Commands, the panel, notifications, and the status line are all
   English; Chinese lives only in `README.zh-CN.md`. A mixed message (an English prefix in front of a
   Chinese `reason`) is what this avoids; do not reintroduce per-string translations.
+  `tests/language.test.ts` enforces this over `src/` and `extensions/`, because the rule is
+  invisible to every other test — a Chinese label renders perfectly well.
 - **Tests must not load the developer's extensions.** Every `DefaultResourceLoader` in `tests/`
   passes `noExtensions: true`. Without it the suite merges the global `settings.json` packages,
   which plays notification sounds on every `agent_end` and makes timing depend on the machine.

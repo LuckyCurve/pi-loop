@@ -54,7 +54,12 @@ left, counters and the prompt on the right. Selecting a row offers **Disable** (
 popup at all, just a short "No loops are running." Everything else is a plain prompt:
 `/loop stop the deploy check` starts a loop, it does not stop one.
 
-The panel is a centered overlay, not a selector sitting in the editor at the bottom of the screen.
+The panel is a centered overlay with its own frame, not a selector sitting in the editor at the
+bottom of the screen, and its countdown ticks while it is open instead of freezing at whatever it
+read when you opened it.
+
+All user-facing text is English — commands, notifications, the panel, the status line. Chinese lives
+only in [README.zh-CN.md](README.zh-CN.md), which `tests/language.test.ts` enforces.
 
 The panel only ever shows the loops of the **current session**. Close it, switch sessions, or fork,
 and there is nothing to see — those loops are gone, not hidden.
@@ -149,7 +154,7 @@ This project is developed test-first. See [AGENTS.md](AGENTS.md) for the working
 
 ```bash
 npm install
-npm test          # 114 tests
+npm test          # 135 tests
 npm run typecheck
 ```
 

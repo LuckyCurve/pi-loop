@@ -17,8 +17,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder } from "@earendil-works/pi-coding-agent";
-import { Container, SelectList, Text } from "@earendil-works/pi-tui";
+import { keyHint, rawKeyHint } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { formatDuration } from "../../src/duration.ts";
 import { formatInjection, isLoopInjection, parseLoopCommand, usageText } from "../../src/commands.ts";
@@ -33,6 +32,7 @@ import {
 	type PanelAction,
 	type PanelOption,
 } from "../../src/panel.ts";
+import { createPanelView, panelLineBudget, panelOverlayOptions } from "./panel-view.ts";
 import { composeStatus } from "../../src/status.ts";
 
 const STATE_TYPE = "pi-loop-state";
@@ -325,64 +325,65 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 		// ------------------------------------------------------------ user commands
 
 		/**
+		 * Key hints in pi's own vocabulary, so they follow whatever the user bound. Built on demand:
+		 * pi's hint helpers read the active theme, which does not exist until a session starts.
+		 */
+		function keyHintLine(): string {
+			return [
+				rawKeyHint("↑↓", "navigate"),
+				keyHint("tui.select.confirm", "select"),
+				keyHint("tui.select.cancel", "cancel"),
+			].join("  ");
+		}
+
+		/**
 		 * Show one dialog and return the chosen row.
 		 *
-		 * Interactive mode gets a real `SelectList`, so a row can carry the schedule on one side and
-		 * the prompt on the other. RPC cannot render custom components, and print/JSON have no UI at
+		 * Interactive mode gets the real box from `panel-view.ts`, which repaints itself so the
+		 * countdown stays live. RPC cannot render custom components, and print/JSON have no UI at
 		 * all, so those fall back to `ctx.ui.select()`.
 		 */
 		async function choose(
 			ctx: ExtensionContext,
-			title: string,
-			options: readonly PanelOption[],
+			dialog: { title: () => string; load: () => readonly PanelOption[]; refresh: boolean },
 		): Promise<PanelOption | undefined> {
 			if (ctx.mode !== "tui") {
 				if (!ctx.hasUI) return undefined;
+				const options = dialog.load();
 				const labels = options.map((option) => option.label);
-				const picked = await ctx.ui.select(title, labels);
+				const picked = await ctx.ui.select(dialog.title(), labels);
 				if (picked === undefined) return undefined;
 				return options[labels.indexOf(picked)];
 			}
 
-			const selected = await ctx.ui.custom<string | undefined>((tui, theme, _keybindings, done) => {
-				const container = new Container();
-				container.addChild(new DynamicBorder((line) => theme.fg("accent", line)));
-				container.addChild(new Text(theme.fg("accent", theme.bold(title)), 1, 0));
+			let selected: string | undefined;
+			await ctx.ui.custom<string | undefined>(
+				(tui, theme, _keybindings, done) =>
+					createPanelView({
+						theme,
+						clock,
+						load: dialog.load,
+						title: dialog.title,
+						hint: keyHintLine(),
+						refreshMs: dialog.refresh ? undefined : 0,
+						maxLines: () => panelLineBudget(tui.terminal.rows),
+						requestRender: () => tui.requestRender(),
+						onSelect: (value) => {
+							selected = value;
+							done(value);
+						},
+						onCancel: () => done(undefined),
+					}),
+				{
+					// A management surface belongs in the middle of the screen. Without this, `custom()`
+					// renders in the editor slot at the bottom, which reads like an afterthought.
+					overlay: true,
+					// A function, so a terminal resize while the panel is open is picked up.
+					overlayOptions: panelOverlayOptions,
+				},
+			);
 
-				const list = new SelectList(
-					options.map((option) => ({ value: option.value, label: option.label, description: option.description })),
-					Math.min(Math.max(options.length, 1), 12),
-					{
-						selectedPrefix: (text) => theme.fg("accent", text),
-						selectedText: (text) => theme.fg("accent", text),
-						description: (text) => theme.fg("muted", text),
-						scrollInfo: (text) => theme.fg("dim", text),
-						noMatch: (text) => theme.fg("warning", text),
-					},
-				);
-				list.onSelect = (item) => done(item.value);
-				list.onCancel = () => done(undefined);
-				container.addChild(list);
-				container.addChild(new Text(theme.fg("dim", "↑↓ 选择 · Enter 确认 · Esc 取消"), 1, 0));
-				container.addChild(new DynamicBorder((line) => theme.fg("accent", line)));
-
-				return {
-					render: (width: number) => container.render(width),
-					invalidate: () => container.invalidate(),
-					handleInput: (data: string) => {
-						list.handleInput(data);
-						tui.requestRender();
-					},
-				};
-			}, {
-				// A management surface belongs in the middle of the screen. Without this, `custom()`
-				// renders in the editor slot at the bottom, which reads like an afterthought.
-				// 80 columns is a dialog width; the overlay clamps it to the terminal otherwise.
-				overlay: true,
-				overlayOptions: { anchor: "center", width: 80, maxHeight: "80%", margin: 1 },
-			});
-
-			return options.find((option) => option.value === selected);
+			return dialog.load().find((option) => option.value === selected);
 		}
 
 		/**
@@ -391,15 +392,17 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 		 */
 		async function openPanel(ctx: ExtensionContext, engineRef: LoopEngine): Promise<void> {
 			for (;;) {
-				const loops = engineRef.list();
-				const options = loopOptions(loops, clock.now());
 				// Nothing running: say so instead of opening a dialog with a lone Close row.
-				if (options.length === 0) {
+				if (engineRef.isEmpty()) {
 					ctx.ui.notify(noLoopsMessage(), "info");
 					return;
 				}
 
-				const selected = await choose(ctx, optionTitle(loops.length), options);
+				const selected = await choose(ctx, {
+					title: () => optionTitle(engineRef.list().length),
+					load: () => loopOptions(engineRef.list(), clock.now()),
+					refresh: true,
+				});
 				if (!selected) return;
 
 				switch (selected.action.kind) {
@@ -424,8 +427,12 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			engineRef: LoopEngine,
 			loop: LoopRecord,
 		): Promise<"close" | "back"> {
-			const options = actionOptions(loop);
-			const selected = await choose(ctx, loopHeading(loop), options);
+			const selected = await choose(ctx, {
+				title: () => loopHeading(loop),
+				load: () => actionOptions(loop),
+				// The three actions never change, so a ticking repaint would only burn CPU.
+				refresh: false,
+			});
 			if (!selected) return "back";
 
 			const action: PanelAction = selected.action;

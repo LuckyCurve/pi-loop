@@ -10,7 +10,11 @@
  * One shared implementation also means the fake-API tests and the real-runtime tests exercise the
  * same UI contract. They used to drift apart, each with its own bespoke stub.
  */
-import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import { initTheme, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+
+// pi's key-hint helpers read the active theme, which the CLI normally initializes before any
+// extension runs. Tests drive sessions directly, so they initialize it here.
+initTheme("dark", false);
 
 /** ANSI for a real arrow key, which `SelectList` reads through pi's keybinding parser. */
 const KEY_DOWN = "\x1b[B";
@@ -54,8 +58,11 @@ const TEST_THEME = {
 	bold: (text: string) => text,
 } as never;
 
-/** Minimal stand-in: components only call `requestRender`, which the fake has nothing to do. */
-const TEST_TUI = { requestRender: () => undefined } as never;
+/**
+ * Minimal stand-in: components call `requestRender` (nothing to do) and read the terminal size.
+ * 40 rows is a normal terminal, so the panel is not height-constrained unless a test says so.
+ */
+const TEST_TUI = { requestRender: () => undefined, terminal: { rows: 40, cols: 120 } } as never;
 
 export function scriptedUI(options: ScriptedUIOptions = {}): ScriptedUI {
 	const answers: (string | undefined)[] = [];
@@ -93,12 +100,17 @@ export function scriptedUI(options: ScriptedUIOptions = {}): ScriptedUI {
 		},
 		custom: async (
 			factory: (tui: never, theme: never, keybindings: never, done: (value: unknown) => void) => unknown,
-			dialogOptions?: { overlay?: boolean; overlayOptions?: { anchor?: string } },
+			dialogOptions?: {
+				overlay?: boolean;
+				// pi accepts a static object or a function it re-evaluates per render (for resizes).
+				overlayOptions?: { anchor?: string } | (() => { anchor?: string }),
+			},
 		) => {
 			options.onDialog?.();
+			const raw = dialogOptions?.overlayOptions;
 			presentation.push({
 				overlay: dialogOptions?.overlay === true,
-				anchor: dialogOptions?.overlayOptions?.anchor,
+				anchor: (typeof raw === "function" ? raw() : raw)?.anchor,
 			});
 			const answer = answers.shift();
 			if (answer === undefined) return undefined;
@@ -112,19 +124,30 @@ export function scriptedUI(options: ScriptedUIOptions = {}): ScriptedUI {
 			const component = (await factory(TEST_TUI, TEST_THEME, undefined as never, done)) as {
 				render(width: number): string[];
 				handleInput(data: string): void;
+				dispose?(): void;
 			};
 
 			const lines = component.render(200).map((line) => line.trim());
-			// Layout is: top border, title, rows…, hint, bottom border.
-			// The selected row carries a cursor glyph; drop it so assertions read as the row itself.
-			const rows = lines.slice(2, -2).map((row) => row.replace(/^[→›]\s+/, ""));
-			dialogs.push({ title: lines[1] ?? "", options: rows });
+			// Layout is `╭─ title ─╮` / rows… / hint / `╰───╯`. `panel-view.test.ts` pins that
+			// layout, so a shift here fails there first, pointing at the real cause.
+			const rows = lines
+				.slice(1, -2)
+				.map((row) =>
+					row
+						// The box pads rows to its full width; the border and padding are not content.
+						.replace(/^│\s*/, "")
+						.replace(/[│\s]+$/, "")
+						.replace(/^[→›]\s+/, ""),
+				);
+			dialogs.push({ title: lines[0]?.replace(/^[╭─\s]+/, "").replace(/[─╮\s]+$/, "") ?? "", options: rows });
 			const index = rows.findIndex((row) => row.includes(answer));
 			if (index === -1) {
 				throw new Error(`no row in ${JSON.stringify(rows)} matched "${answer}"`);
 			}
 			for (let step = 0; step < index; step++) component.handleInput(KEY_DOWN);
 			component.handleInput(KEY_ENTER);
+			// pi calls this when the dialog closes; the panel clears its repaint timer there.
+			component.dispose?.();
 			return settled ? result : undefined;
 		},
 	} as unknown as ExtensionUIContext;
