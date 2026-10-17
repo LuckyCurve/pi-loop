@@ -8,7 +8,7 @@
  */
 
 import { formatDuration, formatNextDue } from "./duration.ts";
-import type { LoopRecord } from "./engine.ts";
+import { loopLabel, type LoopRecord } from "./engine.ts";
 
 export type PanelAction =
 	/** Open the action list for one loop. */
@@ -79,7 +79,7 @@ function pauseLabel(loop: LoopRecord): string {
 }
 
 function schedule(loop: LoopRecord): string {
-	return `${loop.id} · every ${formatDuration(loop.intervalMs)} · `;
+	return `${loopLabel(loop.id)} · every ${formatDuration(loop.intervalMs)} · `;
 }
 
 function counters(loop: LoopRecord): string[] {
@@ -95,7 +95,7 @@ function counters(loop: LoopRecord): string[] {
  * filling that line leaves no border at all. The prompt belongs in `loopDetail`.
  */
 export function loopHeading(loop: LoopRecord, now: number): string {
-	const base = `${loop.id} · every ${formatDuration(loop.intervalMs)}`;
+	const base = `${loopLabel(loop.id)} · every ${formatDuration(loop.intervalMs)}`;
 	return loop.paused ? `${base} · ${stateLabel(loop)}` : `${base} · ${formatNextDue(loop.nextAt - now)}`;
 }
 
@@ -104,8 +104,14 @@ export function loopHeading(loop: LoopRecord, now: number): string {
  * the panel, which is the only place a long prompt can be read.
  */
 export function loopDetail(loop: LoopRecord): string {
-	const why = loop.paused ? [pauseLabel(loop), loop.breakReason].filter(Boolean).join(": ") : "";
-	return [why, loop.prompt.trim()].filter(Boolean).join("\n");
+	const blocks: string[] = [];
+	if (loop.paused) {
+		const stopped = [`Stopped: ${pauseLabel(loop)}`];
+		if (loop.breakReason) stopped.push(loop.breakReason);
+		blocks.push(stopped.join("\n"));
+	}
+	blocks.push(["Instruction", loop.prompt.trim()].filter(Boolean).join("\n"));
+	return blocks.join("\n\n");
 }
 
 /** One row per loop plus the row that leaves the panel. */

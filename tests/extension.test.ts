@@ -34,7 +34,9 @@ interface Harness {
 	emit(event: string, payload?: unknown): Promise<void>;
 	sessionStart(branch?: unknown[], reason?: string): Promise<void>;
 	invokeCommand(args: string): Promise<void>;
-	invokeTool(args: { reason: string; id?: string }): Promise<{ details: { paused: string[]; reason: string } }>;
+	invokeTool(args: { reason: string; id?: string; outcome?: "wait" | "done" }): Promise<{
+		details: { paused: string[]; finished: string[]; reason: string };
+	}>;
 	activateTool(name: string): void;
 	/** Event names the extension subscribed to. */
 	registeredEvents: string[];
@@ -65,9 +67,13 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 	let commandHandler: ((args: string, ctx: ExtensionContext) => Promise<void>) | undefined;
 	interface ToolResult {
 		content: { type: string; text: string }[];
-		details: { paused: string[]; reason: string };
+		details: { paused: string[]; finished: string[]; reason: string };
 	}
-	let toolExecute: ((id: string, params: { reason: string; id?: string }, ctx: ExtensionContext) => Promise<ToolResult>) | undefined;
+	let toolExecute: ((
+		id: string,
+		params: { reason: string; id?: string; outcome?: "wait" | "done" },
+		ctx: ExtensionContext,
+	) => Promise<ToolResult>) | undefined;
 
 	const scripted = scriptedUI({
 		// pi throws from every ctx accessor once the session is replaced; the extension must absorb
@@ -113,7 +119,13 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 		},
 		registerTool: (definition: {
 			name: string;
-			execute: (id: string, params: { reason: string; id?: string }, signal: unknown, update: unknown, ctx: ExtensionContext) => Promise<ToolResult>;
+			execute: (
+				id: string,
+				params: { reason: string; id?: string; outcome?: "wait" | "done" },
+				signal: unknown,
+				update: unknown,
+				ctx: ExtensionContext,
+			) => Promise<ToolResult>;
 		}) => {
 			if (definition.name === BREAK_TOOL_NAME) {
 				toolExecute = (id, params, ctx) => definition.execute(id, params, undefined, undefined, ctx);
@@ -210,7 +222,7 @@ describe("loop extension", () => {
 		expect(h.sent).toHaveLength(1);
 		expect(h.sent[0]).toContain("check the deploy");
 		expect(isLoopInjection(h.sent[0]!)).toBe(true);
-		expect(h.notifications.at(-1)!.message).toMatch(/Loop l1 started/);
+		expect(h.notifications.at(-1)!.message).toMatch(/Task 1 started/);
 		expect(h.tools).toContain(BREAK_TOOL_NAME);
 		expect(h.statuses.filter(Boolean).length).toBeGreaterThan(0);
 		expect(h.entries.at(-1)!.customType).toBe("pi-loop-state");
@@ -249,15 +261,15 @@ describe("loop extension", () => {
 	it("disables and re-enables a loop from the panel", async () => {
 		const h = await startedHarness();
 
-		h.queueSelect("l1", "Disable");
+		h.queueSelect("Task 1", "Disable");
 		await h.invokeCommand("");
-		expect(h.notifications.at(-1)!.message).toMatch(/Disabled 1/);
+		expect(h.notifications.at(-1)!.message).toMatch(/Disabled Task 1/);
 		h.clock.advance(600_000);
 		expect(h.sent).toHaveLength(1);
 
-		h.queueSelect("l1", "Enable");
+		h.queueSelect("Task 1", "Enable");
 		await h.invokeCommand("");
-		expect(h.notifications.at(-1)!.message).toMatch(/Enabled 1/);
+		expect(h.notifications.at(-1)!.message).toMatch(/Enabled Task 1/);
 		h.clock.advance(300_000);
 		expect(h.sent).toHaveLength(2);
 	});
@@ -277,7 +289,7 @@ describe("loop extension", () => {
 
 		// The panel lists the loop, not the usage text: the popup is the primary surface.
 		expect(h.selects[0]!.title).toBe("Loops (1)");
-		expect(h.selects[0]!.rows[0]).toContain("l1");
+		expect(h.selects[0]!.rows[0]).toContain("Task 1");
 		expect(h.selects[0]!.rows[0]).toContain("every 5m");
 		expect(h.selects[0]!.rows.at(-1)).toBe("Close");
 		// The prompt is body text, not a row and not the caption.
@@ -299,32 +311,32 @@ describe("loop extension", () => {
 
 	it("removes a loop from the panel", async () => {
 		const h = await startedHarness();
-		h.queueSelect("l1", "Remove");
+		h.queueSelect("Task 1", "Remove");
 		await h.invokeCommand("");
 
 		expect(h.selects[1]!.rows).toEqual(["Disable", "Run now", "Remove", "Back"]);
-		expect(h.notifications.at(-1)!.message).toMatch(/Removed 1/);
+		expect(h.notifications.at(-1)!.message).toMatch(/Removed Task 1/);
 		expect(h.tools).not.toContain(BREAK_TOOL_NAME);
 		expect(h.clock.pending).toBe(0);
 	});
 
 	it("disables a loop from the panel and enables it again", async () => {
 		const h = await startedHarness();
-		h.queueSelect("l1", "Disable");
+		h.queueSelect("Task 1", "Disable");
 		await h.invokeCommand("");
 
-		expect(h.notifications.at(-1)!.message).toMatch(/Disabled 1/);
+		expect(h.notifications.at(-1)!.message).toMatch(/Disabled Task 1/);
 		h.clock.advance(600_000);
 		expect(h.sent).toHaveLength(1);
 		// A disabled loop is still managed, so the break tool stays available.
 		expect(h.tools).toContain(BREAK_TOOL_NAME);
 
 		const before = h.selects.length;
-		h.queueSelect("l1", "Enable");
+		h.queueSelect("Task 1", "Enable");
 		await h.invokeCommand("");
 		// The action selector for a paused loop offers Enable, not Disable.
 		expect(h.selects[before + 1]!.rows).toEqual(["Enable", "Run now", "Remove", "Back"]);
-		expect(h.notifications.at(-1)!.message).toMatch(/Enabled 1/);
+		expect(h.notifications.at(-1)!.message).toMatch(/Enabled Task 1/);
 		h.clock.advance(300_000);
 		expect(h.sent).toHaveLength(2);
 	});
@@ -333,13 +345,13 @@ describe("loop extension", () => {
 		const h = await startedHarness();
 		const scheduled = (h.entries.at(-1)!.data as { loops: { nextAt: number }[] }).loops[0]!.nextAt;
 
-		h.queueSelect("l1", "Run now");
+		h.queueSelect("Task 1", "Run now");
 		await h.invokeCommand("");
 
 		expect(h.selects[1]!.rows).toEqual(["Disable", "Run now", "Remove", "Back"]);
 		expect(h.sent).toHaveLength(2);
 		expect(h.sent[1]).toContain("check the deploy");
-		expect(h.notifications.at(-1)!.message).toMatch(/Ran loop l1 now/);
+		expect(h.notifications.at(-1)!.message).toMatch(/Ran Task 1 now/);
 		const after = (h.entries.at(-1)!.data as { loops: { nextAt: number }[] }).loops[0]!.nextAt;
 		expect(after, "a manual run must not reschedule the loop").toBe(scheduled);
 
@@ -354,7 +366,7 @@ describe("loop extension", () => {
 		const h = await startedHarness();
 		h.setBusy(true);
 
-		h.queueSelect("l1", "Run now");
+		h.queueSelect("Task 1", "Run now");
 		await h.invokeCommand("");
 
 		expect(h.sent, "a manual run must not queue behind a running turn").toHaveLength(1);
@@ -398,7 +410,7 @@ describe("loop extension", () => {
 		await h.invokeCommand("10s check the deploy");
 
 		const status = h.statuses.filter(Boolean).at(-1);
-		expect(status, "the footer must still report a running loop").toContain("LOOP l1");
+		expect(status, "the footer must still report a running loop").toContain("LOOP Task 1");
 		expect(status, "no countdown, because nothing will tick it").not.toContain("next");
 
 		// Only the loop's own schedule is armed; there is no repaint timer.
@@ -411,7 +423,7 @@ describe("loop extension", () => {
 		const h = await startedHarness();
 		expect(h.statuses.at(-1)).toBeDefined();
 
-		h.queueSelect("l1", "Remove");
+		h.queueSelect("Task 1", "Remove");
 		await h.invokeCommand("");
 
 		expect(h.clock.pending).toBe(0);
@@ -481,6 +493,48 @@ describe("loop extension", () => {
 		const pauseNotices = h.notifications.filter((n) => /paused/.test(n.message));
 		expect(pauseNotices.length).toBeGreaterThan(0);
 		expect(pauseNotices.at(-1)!.level).toBe("info");
+	});
+
+	it("removes the loop when the model reports it is done", async () => {
+		// Two shapes of ending: waiting for the user (resumable) and finished (final). Without the
+		// second, "I fixed it, nothing left to do" had to borrow the pause, and the user's next
+		// "thanks" restarted the whole loop.
+		const h = await startedHarness();
+		h.activateTool(BREAK_TOOL_NAME);
+
+		const result = await h.invokeTool({ reason: "all defects fixed", outcome: "done" });
+		expect(result.details.paused).toEqual([]);
+		expect(result.details.finished).toEqual(["l1"]);
+		expect(h.entries.at(-1)!.data).toMatchObject({ loops: [] });
+		expect(h.tools, "no loop left, so loop_break is withdrawn").not.toContain(BREAK_TOOL_NAME);
+		expect(h.clock.pending).toBe(0);
+
+		// A reply afterwards must not resurrect it.
+		await h.emit("input", { type: "input", text: "thanks!", source: "interactive" });
+		expect((h.entries.at(-1)!.data as { loops: unknown[] }).loops).toEqual([]);
+		h.clock.advance(30 * 60_000);
+		expect(h.sent).toHaveLength(1);
+	});
+
+	it("keeps waiting-loops resumable while a finished one is removed", async () => {
+		const h = makeHarness();
+		await h.sessionStart();
+		await h.invokeCommand("5m first");
+		await h.invokeCommand("5m second");
+		h.activateTool(BREAK_TOOL_NAME);
+
+		const result = await h.invokeTool({ reason: "done with this one", outcome: "done", id: "l1" });
+		expect(result.details.finished).toEqual(["l1"]);
+		const loops = (h.entries.at(-1)!.data as { loops: { id: string }[] }).loops;
+		expect(loops.map((loop) => loop.id), "l2 must not be removed").toEqual(["l2"]);
+	});
+
+	it("defaults to waiting when the model gives no outcome", async () => {
+		const h = await startedHarness();
+		h.activateTool(BREAK_TOOL_NAME);
+		const result = await h.invokeTool({ reason: "need a decision" });
+		expect(result.details.paused).toEqual(["l1"]);
+		expect(result.details.finished).toEqual([]);
 	});
 
 	it("does not resume on the loop's own injections", async () => {

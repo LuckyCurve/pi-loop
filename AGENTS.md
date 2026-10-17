@@ -89,10 +89,20 @@ by running against real pi rather than by reading docs:
   bottom; without the frame and padding, the overlay composites against the transcript behind it and
   has no edge. No row changes either way, so nothing else would notice:
   `tests/helpers/scripted-ui.ts` records the option and `tests/panel-view.test.ts` pins the box.
+- **The model's words and the user's instruction are labelled, never merged.** The panel's detail
+  block prints `Stopped:` (the model's `breakReason`) and `Instruction` (the original prompt) as two
+  labelled blocks. Concatenated, a model's reply reads like the user's own request.
 - **The caption is a status line, never the prompt.** `loopHeading` is short by construction; the
   prompt reaches the panel through `loopDetail`, wrapped into the detail block below the rows. A
   prompt drawn into the border has no length limit and eats the whole line, leaving the box with no
   top edge. `tests/panel.test.ts` asserts the caption cannot contain a prompt.
+- **Two endings, not one.** `loop_break` with `outcome: "done"` removes the loop; the default
+  `"wait"` pauses it and any real user message resumes it. A single "stop" that pauses would make a
+  finished loop indistinguishable from a blocked one, and the user's next message would restart
+  finished work.
+- **A loop is named `Task N`, never `l1`.** The stored id is a key, not a label. `loopLabel()` in
+  `src/engine.ts` is the only place that turns one into the other, and every user-facing surface
+  (status line, notifications, panel, tool text) goes through it.
 - **Run now is a nudge, not a resume.** `LoopEngine.runNow` injects one iteration and leaves `nextAt`,
   the skip counters, and the paused state untouched, so a manual run never resets the rhythm or hides
   a missed iteration. It skips while the agent is busy, like any other iteration.

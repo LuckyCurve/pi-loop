@@ -68,6 +68,16 @@ export interface StartLoopInput {
 	now?: number;
 }
 
+/**
+ * How a loop is named to the user. `l1` is a storage id, not a label: it reads like a variable and
+ * forces the eye to decode a letter before a number. Lives here because the engine's own notices use
+ * it, and every user-facing surface must name a loop the same way.
+ */
+export function loopLabel(id: string): string {
+	const match = /^l([0-9]+)$/.exec(id);
+	return match ? `Task ${match[1]}` : id;
+}
+
 export const DEFAULT_MAX_LOOPS = 20;
 export const DEFAULT_EXPIRE_MS = 7 * 24 * 60 * 60 * 1_000;
 /**
@@ -264,7 +274,7 @@ export class LoopEngine {
 		for (const loop of due) {
 			if (this.isExpired(loop, now)) {
 				this.removeLoop(loop.id);
-				this.host.notify(`Loop ${loop.id} expired after ${loop.runs} run(s); it was removed.`, "warning");
+				this.host.notify(`${loopLabel(loop.id)} expired after ${loop.runs} run(s); it was removed.`, "warning");
 				this.host.onChange("expire");
 				continue;
 			}
@@ -281,7 +291,7 @@ export class LoopEngine {
 				loop.nextAt = now + loop.intervalMs;
 				if (loop.consecutiveSkips === 1 || this.options.notifyEverySkip) {
 					this.host.notify(
-						`Loop ${loop.id} skipped: the agent is still running${loop.consecutiveSkips > 1 ? ` (${loop.consecutiveSkips} in a row)` : ""}.`,
+						`${loopLabel(loop.id)} skipped: the agent is still running${loop.consecutiveSkips > 1 ? ` (${loop.consecutiveSkips} in a row)` : ""}.`,
 						"info",
 					);
 				}
@@ -289,7 +299,7 @@ export class LoopEngine {
 				if (!this.canSkipForever(loop)) {
 					this.removeLoop(loop.id);
 					this.host.notify(
-						`Loop ${loop.id} stopped after ${loop.consecutiveSkips} consecutive skips.`,
+						`${loopLabel(loop.id)} stopped after ${loop.consecutiveSkips} consecutive skips.`,
 						"warning",
 					);
 					this.host.onChange("remove");

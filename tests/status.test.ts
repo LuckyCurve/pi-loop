@@ -24,18 +24,18 @@ describe("composeStatus", () => {
 	});
 
 	it("announces the running loop and its countdown", () => {
-		expect(composeStatus([loop()], NOW)).toBe("⟳ LOOP l1 · every 5m · next 2m30s");
+		expect(composeStatus([loop()], NOW)).toBe("⟳ LOOP Task 1 · every 5m · next 2m30s");
 	});
 
 	it("adds run and skip counts once they are non-zero", () => {
 		expect(composeStatus([loop({ runs: 4, skips: 1 })], NOW)).toBe(
-			"⟳ LOOP l1 · every 5m · next 2m30s · runs 4 · skips 1",
+			"⟳ LOOP Task 1 · every 5m · next 2m30s · runs 4 · skips 1",
 		);
 	});
 
 	it("shows the soonest loop and summarises the rest", () => {
 		const status = composeStatus([loop(), loop({ id: "l2", nextAt: NOW + 60_000 })], NOW);
-		expect(status).toContain("⟳ LOOP l2");
+		expect(status).toContain("⟳ LOOP Task 2");
 		expect(status).toContain("+1 more");
 	});
 
@@ -65,12 +65,12 @@ describe("composeStatus", () => {
 	it("omits the countdown when the footer is not being refreshed", () => {
 		// A countdown that never ticks is worse than no countdown: it keeps claiming a time that has
 		// already passed.
-		expect(composeStatus([loop({ runs: 2 })], NOW, { countdown: false })).toBe("⟳ LOOP l1 · every 5m · runs 2");
+		expect(composeStatus([loop({ runs: 2 })], NOW, { countdown: false })).toBe("⟳ LOOP Task 1 · every 5m · runs 2");
 	});
 
 	it("mentions paused loops next to the active countdown", () => {
 		const status = composeStatus([loop({ runs: 2 }), loop({ id: "l2", paused: "user" })], NOW);
-		expect(status).toContain("⟳ LOOP l1");
+		expect(status).toContain("⟳ LOOP Task 1");
 		expect(status).toContain("1 paused");
 	});
 });

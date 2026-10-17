@@ -22,7 +22,14 @@ import { Type } from "typebox";
 import { formatDuration } from "../../src/duration.ts";
 import { formatInjection, isLoopInjection, parseLoopCommand, usageText } from "../../src/commands.ts";
 import { type Clock, systemClock } from "../../src/clock.ts";
-import { DEFAULT_EXPIRE_MS, DEFAULT_MAX_LOOPS, LoopEngine, type LoopRecord, type NotifyLevel } from "../../src/engine.ts";
+import {
+	DEFAULT_EXPIRE_MS,
+	DEFAULT_MAX_LOOPS,
+	LoopEngine,
+	loopLabel,
+	type LoopRecord,
+	type NotifyLevel,
+} from "../../src/engine.ts";
 import {
 	actionOptions,
 	loopDetail,
@@ -474,7 +481,10 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			switch (action.kind) {
 				case "remove": {
 					const removed = engineRef.stop(action.id);
-					ctx.ui.notify(removed === 0 ? `No loop with id ${action.id}.` : `Removed ${removed} loop(s).`, removed === 0 ? "warning" : "info");
+					ctx.ui.notify(
+						removed === 0 ? `No loop with id ${action.id}.` : `Removed ${loopLabel(action.id)}.`,
+						removed === 0 ? "warning" : "info",
+					);
 					// Nothing left to manage means nothing left to show: re-reading the list would
 					// replace the removal confirmation with "No loops are running."
 					return engineRef.isEmpty() ? "close" : "back";
@@ -484,9 +494,9 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 					if (outcome === "missing") {
 						ctx.ui.notify(`No loop with id ${action.id}.`, "warning");
 					} else if (outcome === "busy") {
-						ctx.ui.notify(`Loop ${action.id} was not run: the agent is still running.`, "info");
+						ctx.ui.notify(`${loopLabel(action.id)} was not run: the agent is still running.`, "info");
 					} else {
-						ctx.ui.notify(`Ran loop ${action.id} now.`, "info");
+						ctx.ui.notify(`Ran ${loopLabel(action.id)} now.`, "info");
 					}
 					// A manual run starts a turn of its own, so close the panel rather than covering it.
 					return "close";
@@ -495,13 +505,13 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 					if (action.enable) {
 						const resumed = engineRef.resume(action.id);
 						ctx.ui.notify(
-							resumed.length === 0 ? `Loop ${action.id} was not paused.` : `Enabled ${resumed.length} loop(s).`,
+							resumed.length === 0 ? `${loopLabel(action.id)} was not paused.` : `Enabled ${loopLabel(action.id)}.`,
 							resumed.length === 0 ? "warning" : "info",
 						);
 					} else {
 						const paused = engineRef.pause(action.id, "user");
 						ctx.ui.notify(
-							paused === 0 ? `Loop ${action.id} is already paused.` : `Disabled ${paused} loop(s).`,
+							paused === 0 ? `${loopLabel(action.id)} is already paused.` : `Disabled ${loopLabel(action.id)}.`,
 							paused === 0 ? "warning" : "info",
 						);
 					}
@@ -550,7 +560,7 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 							const loop = engineRef.start({ prompt: command.prompt, intervalMs: command.intervalMs });
 							const total = engineRef.list().length;
 							ctx.ui.notify(
-								`Loop ${loop.id} started: every ${command.intervalText}${total > 1 ? ` (${total} running)` : ""}.`,
+								`${loopLabel(loop.id)} started: every ${command.intervalText}${total > 1 ? ` (${total} running)` : ""}.`,
 								"info",
 							);
 						} catch (error) {
@@ -568,15 +578,25 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			name: BREAK_TOOL_NAME,
 			label: "Break loop",
 			description:
-				"Pause the recurring /loop that started the current turn and hand control back to the user. Use it when the iteration cannot proceed without information only the user has: put the questions in `reason`, then ask them in your reply. The loop is paused, not deleted; the user's next message resumes it.",
-			promptSnippet: "Pause the active /loop and wait for the user",
+				"End the recurring /loop that started the current turn, then hand control back to the user. Set `outcome` to \"done\" when the work is finished — the loop is removed and will not run again. Use the default `outcome` of \"wait\" when you cannot continue without information only the user has: put the questions in `reason`, ask them in your reply, and the user's next message resumes the loop.",
+			promptSnippet: "End the active /loop: finished, or waiting for the user",
 			promptGuidelines: [
-				"Call `loop_break` instead of continuing a /loop iteration when the requirements are unclear, a decision needs approval, or you would otherwise have to guess.",
-				"After calling `loop_break`, ask your questions in the reply and stop working on the loop task.",
+				"Call `loop_break` with `outcome: \"done\"` as soon as the loop's task is complete and no further iteration would add anything. Do not keep a finished loop running by pausing it, and do not call it just to stop early.",
+				"Call `loop_break` with the default `outcome` (\"wait\") instead of continuing a /loop iteration when the requirements are unclear, a decision needs approval, or you would otherwise have to guess.",
+				"After either outcome, report the result to the user in your reply and end the turn.",
 			],
 			parameters: Type.Object({
-				reason: Type.String({ description: "Why the loop cannot continue, including the questions for the user" }),
-				id: Type.Optional(Type.String({ description: "Loop id to break; defaults to the loop that started this turn" })),
+				reason: Type.String({
+					description:
+						"For \"done\": what was finished. For \"wait\": why the loop cannot continue, including the questions for the user.",
+				}),
+				outcome: Type.Optional(
+					Type.Union([Type.Literal("wait"), Type.Literal("done")], {
+						description:
+							'\"done\" removes the loop because the work is complete; \"wait\" (default) pauses it until the user replies.',
+					}),
+				),
+				id: Type.Optional(Type.String({ description: "Loop id to end; defaults to the loop that started this turn" })),
 			}),
 			defaultActive: false,
 			executionMode: "sequential",
@@ -584,16 +604,44 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 				const active = ensureEngine(ctx);
 				if (!active || active.isEmpty()) {
 					return {
-						content: [{ type: "text", text: "No loop is running, so nothing was paused." }],
-						details: { paused: [] as string[], reason: params.reason },
+						content: [{ type: "text", text: "No loop is running, so nothing was changed." }],
+						details: { paused: [] as string[], finished: [] as string[], reason: params.reason },
 					};
 				}
+
 				const target = params.id ?? active.lastFired?.id ?? "all";
+				const outcome = params.outcome ?? "wait";
+
+				if (outcome === "done") {
+					// Finished, not blocked: remove it. A paused loop is resumed by the next user message,
+					// so "thanks" would start the work again if this paused instead of removing.
+					const finished = (target === "all" ? active.list() : active.list().filter((loop) => loop.id === target)).map(
+						(loop) => loop.id,
+					);
+					if (finished.length === 0) {
+						return {
+							content: [{ type: "text", text: `No loop matched ${target}; nothing was removed.` }],
+							details: { paused: [] as string[], finished: [] as string[], reason: params.reason },
+						};
+					}
+					for (const id of finished) active.stop(id);
+					ctx.ui.notify(`${finished.map(loopLabel).join(", ")} finished: ${params.reason}`, "info");
+					return {
+						content: [
+							{
+								type: "text",
+								text: `${finished.map(loopLabel).join(", ")} removed: the work is complete. Report what you finished and end this turn.`,
+							},
+						],
+						details: { paused: [] as string[], finished, reason: params.reason },
+					};
+				}
+
 				const paused = active.pause(target, "agent", params.reason);
 				if (paused === 0) {
 					return {
 						content: [{ type: "text", text: `No running loop matched ${target}; nothing was paused.` }],
-						details: { paused: [] as string[], reason: params.reason },
+						details: { paused: [] as string[], finished: [] as string[], reason: params.reason },
 					};
 				}
 				const ids = active
@@ -603,15 +651,15 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 				// `info`, not `warning`: this is the designed end of a loop (done, or blocked on an answer),
 				// and pi prefixes a warning with "Warning:" — which reads as a malfunction. The paused
 				// state stays visible in the footer and the panel regardless.
-				ctx.ui.notify(`Loop ${ids.join(", ")} paused: ${params.reason}`, "info");
+				ctx.ui.notify(`${ids.map(loopLabel).join(", ")} paused: ${params.reason}`, "info");
 				return {
 					content: [
 						{
 							type: "text",
-							text: `Paused loop ${ids.join(", ")}. Ask the user the questions from your reason and end this turn; the user's next message resumes the loop.`,
+							text: `Paused ${ids.map(loopLabel).join(", ")}. Ask the user the questions from your reason and end this turn; the user's next message resumes the loop.`,
 						},
 					],
-					details: { paused: ids, reason: params.reason },
+					details: { paused: ids, finished: [] as string[], reason: params.reason },
 				};
 			},
 		});

@@ -216,7 +216,7 @@ describe("pi-loop against the real pi runtime", () => {
 
 			await session.prompt("/loop 1s WORK");
 			await session.waitForIdle();
-			ui.script("l1", "Disable", "Close");
+			ui.script("Task 1", "Disable", "Close");
 			await session.prompt("/loop");
 			await session.waitForIdle();
 
@@ -231,6 +231,38 @@ describe("pi-loop against the real pi runtime", () => {
 			expect(state.requests.filter((request) => /· run 2 ·/.test(request.text))).toHaveLength(0);
 
 			await removeLoop(session, ui, "l1");
+			session.dispose();
+		},
+		120_000,
+	);
+
+	it(
+		"removes the loop on a done outcome, so the next message does not restart it",
+		async () => {
+			// The workflow this exists for: the model finishes the backlog, reports done, and a
+			// follow-up "thanks" must not start working again.
+			const { session, state, ui } = await boot((request, index) =>
+				index === 0 && request.tools.includes(BREAK_TOOL_NAME)
+					? { toolCall: { name: BREAK_TOOL_NAME, arguments: { reason: "all defects fixed", outcome: "done" } } }
+					: { text: "ack" },
+			);
+
+			await session.prompt("/loop 1s FINISH_ME");
+			await session.waitForIdle();
+			await delay(2_500);
+
+			// The loop is gone, so the tool that only exists for a loop is withdrawn too.
+			expect(session.getActiveToolNames()).not.toContain(BREAK_TOOL_NAME);
+
+			// A human reply must not resurrect it. The reply itself reaches the model — that is a
+			// normal turn — but it must not start another *iteration*.
+			await session.prompt("thanks, great work");
+			await session.waitForIdle();
+			const afterReply = state.requests.length;
+			await delay(2_500);
+			expect(state.requests.length, "no scheduled iteration after a finished loop").toBe(afterReply);
+			expect(state.requests.some((request) => /· run 2 ·/.test(request.text))).toBe(false);
+
 			session.dispose();
 		},
 		120_000,
@@ -286,7 +318,7 @@ describe("pi-loop against the real pi runtime", () => {
 			await session.waitForIdle();
 			const before = state.requests.length;
 
-			ui.script("l1", "Run now");
+			ui.script("Task 1", "Run now");
 			await session.prompt("/loop");
 			await session.waitForIdle();
 

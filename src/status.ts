@@ -1,7 +1,7 @@
 /** Compact footer status for running loops. */
 
 import { formatDuration, formatNextDue } from "./duration.ts";
-import type { LoopRecord } from "./engine.ts";
+import { loopLabel, type LoopRecord } from "./engine.ts";
 
 export interface StatusOptions {
 	/**
@@ -32,7 +32,7 @@ export function composeStatus(
 	const next = active.reduce((earliest, loop) => (loop.nextAt < earliest.nextAt ? loop : earliest), active[0]!);
 	// `formatDuration`, not `formatCountdown`: the panel words intervals the same way, so a 1-day
 	// loop reads `every 1d` on both surfaces instead of `1d` in one and `24h` in the other.
-	const parts = [`⟳ LOOP ${next.id}`, `every ${formatDuration(next.intervalMs)}`];
+	const parts = [`⟳ LOOP ${loopLabel(next.id)}`, `every ${formatDuration(next.intervalMs)}`];
 	if (options.countdown !== false) parts.push(formatNextDue(next.nextAt - now));
 	if (next.runs > 0) parts.push(`runs ${next.runs}`);
 	if (next.skips > 0) parts.push(`skips ${next.skips}`);

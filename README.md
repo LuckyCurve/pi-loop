@@ -21,11 +21,12 @@ the condition you gave it is met.
 The interesting part is the exit. A loop that only stops when you remember to stop it is a cron
 job wearing a costume. `pi-loop` gives the agent a way to end the loop *deliberately*:
 
-- **Done** — the condition is met, nothing left to do.
+- **Done** — the condition is met. The loop is **removed**, so your next message cannot restart it.
 - **Blocked** — it needs a decision or information it cannot invent, so it pauses the loop, asks,
   and waits. Your reply resumes it.
 
-That second case is what makes a loop safe to leave running. The agent stops instead of guessing.
+Those are two different endings on purpose. Pausing a finished loop looks identical to waiting for
+you, and then a simple "thanks" would start the work again.
 
 ## Install
 
@@ -86,9 +87,15 @@ The extension registers a `loop_break` tool, declared to the model **only while 
 { "reason": "Which environment should I target? Staging or production?" }
 ```
 
-Calling it **pauses** the loop rather than deleting it, records the reason in the `/loop` panel, and
-tells the model to ask you and end its turn. **Your next message resumes the loop automatically.**
-You can also re-enable it by hand from the panel.
+The tool takes an `outcome`:
+
+| `outcome` | Meaning | What happens |
+|---|---|---|
+| `"done"` | The work is finished | The loop is **removed**; it never runs again |
+| `"wait"` (default) | Blocked on something only you know | The loop is **paused**; your next message resumes it |
+
+Picking `done` is what makes a finished loop stay finished. A paused loop resumes on any real
+message, and "thanks" is not a reason to start working again.
 
 The intended pattern for work that needs human input:
 
@@ -164,7 +171,7 @@ This project is developed test-first. See [AGENTS.md](AGENTS.md) for the working
 
 ```bash
 npm install
-npm test          # 163 tests
+npm test          # 170 tests
 npm run typecheck
 ```
 

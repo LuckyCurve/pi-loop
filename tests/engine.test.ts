@@ -254,6 +254,31 @@ describe("LoopEngine control", () => {
 	});
 });
 
+describe("LoopEngine outcomes", () => {
+	it("pauses on a wait outcome and stays waking on a reply", () => {
+		const h = harness();
+		h.engine.start({ prompt: "a", intervalMs: 60_000 });
+		expect(h.engine.pause("l1", "agent", "which env?")).toBe(1);
+
+		// A loop that is waiting for an answer is resumable: that is what "wait" promises.
+		expect(h.engine.agentPaused.map((loop) => loop.id)).toEqual(["l1"]);
+		h.engine.resume("all", "agent");
+		expect(h.engine.get("l1")!.paused).toBeUndefined();
+	});
+
+	it("removes on a done outcome, so a reply cannot bring it back", () => {
+		// The other way a loop ends: the work is finished and there is nothing to ask. Deleting it is
+		// what makes that final — a paused loop is resumed by the next user message, and "the user
+		// said thanks" is not a reason to start working again.
+		const h = harness();
+		h.engine.start({ prompt: "a", intervalMs: 60_000 });
+		expect(h.engine.stop("l1")).toBe(1);
+		expect(h.engine.list()).toEqual([]);
+		expect(h.engine.agentPaused).toEqual([]);
+		expect(h.clock.pending).toBe(0);
+	});
+});
+
 describe("LoopEngine run now", () => {
 	it("runs an iteration immediately without touching the schedule", () => {
 		const h = harness();

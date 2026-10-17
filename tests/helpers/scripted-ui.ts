@@ -212,12 +212,12 @@ export function scriptedUI(options: ScriptedUIOptions = {}): ScriptedUI {
  * panel stays exercised by everything that depends on it.
  */
 export async function removeLoop(session: { prompt(text: string): Promise<unknown> }, ui: ScriptedUI, id: string): Promise<void> {
-	ui.script(id, "Remove");
+	ui.script(`Task ${id.slice(1)}`, "Remove");
 	await session.prompt("/loop");
 }
 
 /** Disable one loop through the panel. */
 export async function disableLoop(session: { prompt(text: string): Promise<unknown> }, ui: ScriptedUI, id: string): Promise<void> {
-	ui.script(id, "Disable");
+	ui.script(`Task ${id.slice(1)}`, "Disable");
 	await session.prompt("/loop");
 }

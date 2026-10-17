@@ -35,7 +35,7 @@ describe("optionTitle", () => {
 
 describe("loopHeading", () => {
 	it("is one short status line, because it is drawn into the box border", () => {
-		expect(loopHeading(loop(), NOW)).toBe("l1 · every 5m · next 2m30s");
+		expect(loopHeading(loop(), NOW)).toBe("Task 1 · every 5m · next 2m30s");
 	});
 
 	it("never lets a prompt reach the caption", () => {
@@ -47,24 +47,35 @@ describe("loopHeading", () => {
 	});
 
 	it("names the state instead of a countdown while a loop is stopped", () => {
-		expect(loopHeading(loop({ paused: "agent" }), NOW)).toBe("l1 · every 5m · paused");
-		expect(loopHeading(loop({ paused: "user" }), NOW)).toBe("l1 · every 5m · disabled");
+		expect(loopHeading(loop({ paused: "agent" }), NOW)).toBe("Task 1 · every 5m · paused");
+		expect(loopHeading(loop({ paused: "user" }), NOW)).toBe("Task 1 · every 5m · disabled");
 	});
 });
 
 describe("loopDetail", () => {
-	it("carries the prompt in full, so a long one is readable somewhere", () => {
-		const prompt = "y".repeat(300);
-		expect(loopDetail(loop({ prompt }))).toBe(prompt);
+	const nl = String.fromCharCode(10);
+
+	it("labels the instruction, so it is never confused with the model's words", () => {
+		// The previous version printed the prompt and the break reason as one plain block; the reason
+		// is written by the model, so the two read as one voice.
+		expect(loopDetail(loop())).toBe(`Instruction${nl}check the deploy`);
 	});
 
-	it("leads with why a stopped loop stopped", () => {
-		const nl = String.fromCharCode(10);
+	it("carries the prompt in full, so a long one is readable somewhere", () => {
+		const prompt = "y".repeat(300);
+		expect(loopDetail(loop({ prompt }))).toBe(`Instruction${nl}${prompt}`);
+	});
+
+	it("puts the model's reason in its own labelled block, before the instruction", () => {
 		expect(loopDetail(loop({ paused: "agent", breakReason: "which env?" }))).toBe(
-			`waiting for your answer: which env?${nl}check the deploy`,
+			[`Stopped: waiting for your answer`, "which env?", "", "Instruction", "check the deploy"].join(nl),
 		);
-		expect(loopDetail(loop({ paused: "user" }))).toBe(`disabled by you${nl}check the deploy`);
-		expect(loopDetail(loop({ paused: "agent" }))).toBe(`waiting for your answer${nl}check the deploy`);
+		expect(loopDetail(loop({ paused: "user" }))).toBe(
+			[`Stopped: disabled by you`, "", "Instruction", "check the deploy"].join(nl),
+		);
+		expect(loopDetail(loop({ paused: "agent" }))).toBe(
+			[`Stopped: waiting for your answer`, "", "Instruction", "check the deploy"].join(nl),
+		);
 	});
 });
 
@@ -81,19 +92,19 @@ describe("pauseWording", () => {
 describe("loopOptions", () => {
 	it("puts the schedule on the primary column and the counts plus prompt on the detail column", () => {
 		const [row] = loopOptions([loop()], NOW);
-		expect(row!.label).toBe("l1 · every 5m · next 2m30s");
+		expect(row!.label).toBe("Task 1 · every 5m · next 2m30s");
 		expect(row!.description).toBe("runs 4 · skips 1 · check the deploy");
 		expect(row!.action).toEqual({ kind: "open", id: "l1" });
 	});
 
 	it("drops the run and skip counts for a paused loop and leads with why it stopped", () => {
 		const [waiting] = loopOptions([loop({ paused: "agent", breakReason: "which env?" })], NOW);
-		expect(waiting!.label).toBe("l1 · every 5m · paused");
+		expect(waiting!.label).toBe("Task 1 · every 5m · paused");
 		expect(waiting!.label).not.toContain("runs");
 		expect(waiting!.description).toBe("waiting for your answer · which env? · check the deploy");
 
 		const [disabled] = loopOptions([loop({ paused: "user" })], NOW);
-		expect(disabled!.label).toBe("l1 · every 5m · disabled");
+		expect(disabled!.label).toBe("Task 1 · every 5m · disabled");
 		expect(disabled!.description).toBe("disabled by you · check the deploy");
 	});
 
