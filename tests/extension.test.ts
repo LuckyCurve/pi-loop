@@ -83,6 +83,10 @@ interface Harness {
 	/** Event names the extension subscribed to. */
 	registeredEvents: string[];
 	setNoUI(value: boolean): void;
+	/** Act while a dialog is open; see `scriptedUI`. */
+	setOnDialogOpen(hook: () => void | Promise<void>): void;
+	/** Repaints requested by live dialogs. */
+	repaints: number[];
 	/** Queue answers for the dialogs the extension opens, in call order. */
 	queueSelect(...answers: (string | undefined)[]): void;
 	/** Every dialog the extension showed: caption, rendered body, and rows. */
@@ -208,6 +212,10 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 		setNoUI: (value: boolean) => {
 			state.noUI = value;
 		},
+		setOnDialogOpen: (hook) => {
+			scripted.onDialogOpen = () => hook();
+		},
+		repaints: scripted.repaints,
 		emit,
 		async sessionStart(branch: unknown[] = options.branch ?? [], reason = "reload") {
 			void branch;
@@ -404,6 +412,41 @@ describe("loop extension", () => {
 		expect(h.sent).toHaveLength(1);
 		expect(h.tools).toContain(BREAK_TOOL_NAME);
 		expect(h.clock.pending).toBeGreaterThan(0);
+	});
+
+	it("disposes an open panel when the session goes away", async () => {
+		// pi hides an overlay on teardown but does not dispose the component, so the panel's repaint
+		// timer would otherwise tick for the rest of the process, redrawing a loop from a session
+		// that no longer exists.
+		const h = await startedHarness();
+		let repaintsAfterShutdown = 0;
+		h.setOnDialogOpen(async () => {
+			await h.emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
+			// A minute of ticks: a timer that outlived the session would repaint on every one.
+			const before = h.repaints.length;
+			h.clock.advance(60_000);
+			repaintsAfterShutdown = h.repaints.length - before;
+		});
+
+		h.queueSelect("Close");
+		await h.invokeCommand("");
+
+		expect(repaintsAfterShutdown, "an open panel's timer must not outlive the session").toBe(0);
+	});
+
+	it("still shows the loop when the footer refresh is switched off", async () => {
+		// `statusRefreshMs: 0` used to skip the compose step entirely, so a running loop was absent
+		// from the footer rather than merely undated.
+		const h = makeHarness({ settings: { statusRefreshMs: 0 } });
+		await h.sessionStart();
+		await h.invokeCommand("10s check the deploy");
+
+		const status = h.statuses.filter(Boolean).at(-1);
+		expect(status, "the footer must still report a running loop").toContain("LOOP l1");
+		expect(status, "no countdown, because nothing will tick it").not.toContain("next");
+
+		// Only the loop's own schedule is armed; there is no repaint timer.
+		expect(h.clock.pending).toBe(1);
 	});
 
 	it("clears the footer when the last loop is removed", async () => {

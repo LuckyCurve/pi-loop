@@ -62,6 +62,12 @@ describe("composeStatus", () => {
 		expect(composeStatus([loop({ intervalMs: 86_400_000 })], NOW)).toContain("every 1d");
 	});
 
+	it("omits the countdown when the footer is not being refreshed", () => {
+		// A countdown that never ticks is worse than no countdown: it keeps claiming a time that has
+		// already passed.
+		expect(composeStatus([loop({ runs: 2 })], NOW, { countdown: false })).toBe("⟳ LOOP l1 · every 5m · runs 2");
+	});
+
 	it("mentions paused loops next to the active countdown", () => {
 		const status = composeStatus([loop({ runs: 2 }), loop({ id: "l2", paused: "user" })], NOW);
 		expect(status).toContain("⟳ LOOP l1");

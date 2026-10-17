@@ -10,7 +10,7 @@
  * former verb is now always a prompt, which is the safer reading anyway.
  */
 
-import { formatDuration, parseLoopArgs } from "./duration.ts";
+import { formatDuration, MAX_INTERVAL_MS, MIN_INTERVAL_MS, parseLoopArgs } from "./duration.ts";
 
 export type LoopCommand =
 	| { kind: "start"; intervalMs: number; intervalText: string; prompt: string }
@@ -44,7 +44,7 @@ export function usageText(defaultIntervalMs: number): string {
 		`  /loop check the deploy          no interval: defaults to ${formatDuration(defaultIntervalMs)}`,
 		"  /loop                            see, disable, or remove running loops",
 		"",
-		"Intervals: Nms, Ns, Nm, Nh, Nd (minimum 1s).",
+		`Intervals: Nms, Ns, Nm, Nh, Nd, clamped to ${formatDuration(MIN_INTERVAL_MS)} … ${formatDuration(MAX_INTERVAL_MS)}.`,
 	].join("\n");
 }
 

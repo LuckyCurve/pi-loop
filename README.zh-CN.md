@@ -102,7 +102,7 @@ prompt 长度不限，所以它永远不会被放进弹窗标题（标题是状�
     "expireAfterMs": 604800000,    // 7 天后过期；0 = 不过期
     "maxLoops": 20,                // 并发循环上限
     "notifyEverySkip": false,      // true = 每次跳过都提示（默认每段连续跳过只提示一次）
-    "statusRefreshMs": 15000       // 状态栏倒计时刷新频率；0 = 不刷新
+    "statusRefreshMs": 15000       // 状态栏倒计时刷新频率；0 = 仍显示状态，但不显示倒计时
   }
 }
 ```
@@ -136,7 +136,7 @@ prompt 长度不限，所以它永远不会被放进弹窗标题（标题是状�
 
 ```bash
 npm install
-npm test          # 156 个测试
+npm test          # 160 个测试
 npm run typecheck
 ```
 

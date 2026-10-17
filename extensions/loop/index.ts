@@ -33,7 +33,7 @@ import {
 	type PanelAction,
 	type PanelOption,
 } from "../../src/panel.ts";
-import { createPanelView, panelLineBudget, panelOverlayOptions } from "./panel-view.ts";
+import { createPanelView, panelLineBudget, panelOverlayOptions, type PanelView } from "./panel-view.ts";
 import { composeStatus } from "../../src/status.ts";
 
 const STATE_TYPE = "pi-loop-state";
@@ -51,7 +51,7 @@ export interface LoopSettings {
 	maxLoops: number;
 	/** Notify on every skipped iteration instead of once per streak. */
 	notifyEverySkip: boolean;
-	/** Footer countdown refresh cadence in ms. 0 disables it. */
+	/** Footer countdown refresh cadence in ms. 0 keeps the status but drops the countdown. */
 	statusRefreshMs: number;
 }
 
@@ -102,6 +102,8 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 		let refreshing = false;
 		let lastNotifyAt = 0;
 		let lastNotifyMessage = "";
+		/** The panel on screen, if any. pi hides an overlay on teardown without disposing it. */
+		let livePanel: PanelView | undefined;
 
 		function notify(message: string, level: NotifyLevel): void {
 			// Suppress identical messages within 5s: several loops can skip in the same pass.
@@ -151,7 +153,9 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			if (!engine || refreshing || !ctxRef) return;
 			refreshing = true;
 			try {
-				const status = composeStatus(engine.list(), clock.now());
+				const status = composeStatus(engine.list(), clock.now(), {
+					countdown: settings.statusRefreshMs > 0,
+				});
 				if (status !== lastStatus) {
 					lastStatus = status;
 					const ctx = ctxRef;
@@ -174,17 +178,18 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			}, settings.statusRefreshMs);
 		}
 
-		/** Refresh the countdown now and keep it fresh only while a loop is running. */
+		/**
+		 * Update the footer now, and keep it ticking only while a loop is running and the refresh is
+		 * enabled. Composing is unconditional: a footer that is not repainted must still be correct
+		 * when the loop set changes, and must clear when the last loop goes.
+		 */
 		function syncStatusTimer(): void {
-			if (!engine || settings.statusRefreshMs <= 0) {
+			if (!engine) {
 				disarmStatusTimer();
 				return;
 			}
-			// Refresh even when nothing is left: an empty set composes to undefined, which is what
-			// clears the footer. Returning early here left the last loop's countdown on screen after
-			// the loop was removed or expired.
 			refreshStatus();
-			if (engine.isEmpty()) {
+			if (engine.isEmpty() || settings.statusRefreshMs <= 0) {
 				disarmStatusTimer();
 				return;
 			}
@@ -212,9 +217,17 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			}
 		}
 
-		/** Drop the engine and its timers; safe to call repeatedly. */
+		/**
+		 * Drop the engine and its timers; safe to call repeatedly.
+		 *
+		 * An open panel is disposed here too. pi hides the overlay when the session goes away but does
+		 * not dispose the component, and the panel repaints itself on a timer — without this, that
+		 * timer would keep redrawing a loop from a session that no longer exists.
+		 */
 		function disposeEngine(): void {
 			disarmStatusTimer();
+			livePanel?.dispose();
+			livePanel = undefined;
 			engine?.dispose();
 			engine = undefined;
 		}
@@ -363,31 +376,39 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			}
 
 			let selected: string | undefined;
-			await ctx.ui.custom<string | undefined>(
-				(tui, theme, _keybindings, done) =>
-					createPanelView({
-						theme,
-						clock,
-						load: dialog.load,
-						title: dialog.title,
-						intro: dialog.intro,
-						hint: keyHintLine(),
-						maxLines: () => panelLineBudget(tui.terminal.rows),
-						requestRender: () => tui.requestRender(),
-						onSelect: (value) => {
-							selected = value;
-							done(value);
-						},
-						onCancel: () => done(undefined),
-					}),
-				{
-					// A management surface belongs in the middle of the screen. Without this, `custom()`
-					// renders in the editor slot at the bottom, which reads like an afterthought.
-					overlay: true,
-					// A function, so a terminal resize while the panel is open is picked up.
-					overlayOptions: panelOverlayOptions,
-				},
-			);
+			try {
+				await ctx.ui.custom<string | undefined>(
+					(tui, theme, _keybindings, done) => {
+						livePanel = createPanelView({
+							theme,
+							clock,
+							load: dialog.load,
+							title: dialog.title,
+							intro: dialog.intro,
+							hint: keyHintLine(),
+							maxLines: () => panelLineBudget(tui.terminal.rows),
+							requestRender: () => tui.requestRender(),
+							onSelect: (value) => {
+								selected = value;
+								done(value);
+							},
+							onCancel: () => done(undefined),
+						});
+						return livePanel;
+					},
+					{
+						// A management surface belongs in the middle of the screen. Without this, `custom()`
+						// renders in the editor slot at the bottom, which reads like an afterthought.
+						overlay: true,
+						// A function, so a terminal resize while the panel is open is picked up.
+						overlayOptions: panelOverlayOptions,
+					},
+				);
+			} finally {
+				// pi disposes the component when the dialog closes; this covers the other paths.
+				livePanel?.dispose();
+				livePanel = undefined;
+			}
 
 			return dialog.load().find((option) => option.value === selected);
 		}

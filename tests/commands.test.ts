@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatInjection, parseLoopCommand, usageText } from "../src/commands.ts";
+import { formatDuration, MAX_INTERVAL_MS, MIN_INTERVAL_MS } from "../src/duration.ts";
 
 const DEFAULT = 10 * 60_000;
 
@@ -72,6 +73,14 @@ describe("parseLoopCommand", () => {
 });
 
 describe("usageText", () => {
+	it("states the clamp range the parser actually enforces", () => {
+		// The text used to hardcode `minimum 1s` and never mention the upper bound, so the README
+		// and the usage text described the same rule differently.
+		const text = usageText(DEFAULT);
+		expect(text).toContain(formatDuration(MIN_INTERVAL_MS));
+		expect(text).toContain(formatDuration(MAX_INTERVAL_MS));
+	});
+
 	it("documents only the two ways to use /loop", () => {
 		const text = usageText(DEFAULT);
 		expect(text).toContain("defaults to 10m");

@@ -38,6 +38,8 @@ export interface ScriptedUI {
 	statuses: (string | undefined)[];
 	/** `setEditorText` calls, in order. */
 	editorTexts: string[];
+	/** Every `tui.requestRender()` a component asked for, i.e. a repaint of a live dialog. */
+	repaints: number[];
 	/**
 	 * Append answers: each dialog consumes one. A string names a row — exact label first, then a
 	 * prefix (`"l1"`, `"Disable"`) — `undefined` closes the dialog like Esc.
@@ -45,6 +47,11 @@ export interface ScriptedUI {
 	script(...answers: (string | undefined)[]): void;
 	/** Dialog titles shown so far. */
 	titles(): string[];
+	/**
+	 * Runs while a `custom()` dialog is open, before the scripted answer is applied. Lets a test act
+	 * mid-dialog, e.g. tear the session down while the panel is on screen.
+	 */
+	onDialogOpen?: (component: unknown) => void | Promise<void>;
 	/** Whether a queued answer is still waiting, i.e. the extension opened fewer dialogs than scripted. */
 	pendingAnswers(): number;
 }
@@ -62,10 +69,14 @@ const TEST_THEME = {
 } as never;
 
 /**
- * Minimal stand-in: components call `requestRender` (nothing to do) and read the terminal size.
+ * Minimal stand-in for the terminal: components call `requestRender` (recorded) and read the size.
  * 40 rows is a normal terminal, so the panel is not height-constrained unless a test says so.
  */
-const TEST_TUI = { requestRender: () => undefined, terminal: { rows: 40, cols: 120 } } as never;
+
+/** Every repaint requested by a live dialog, so a leak after teardown is observable. */
+const repaints: number[] = [];
+
+const testTui = () => ({ requestRender: () => repaints.push(Date.now()), terminal: { rows: 40, cols: 120 } }) as never;
 
 export function scriptedUI(options: ScriptedUIOptions = {}): ScriptedUI {
 	const answers: (string | undefined)[] = [];
@@ -125,11 +136,12 @@ export function scriptedUI(options: ScriptedUIOptions = {}): ScriptedUI {
 				result = value;
 				settled = true;
 			};
-			const component = (await factory(TEST_TUI, TEST_THEME, undefined as never, done)) as {
+			const component = (await factory(testTui(), TEST_THEME, undefined as never, done)) as {
 				render(width: number): string[];
 				handleInput(data: string): void;
 				dispose?(): void;
 			};
+			await scripted.onDialogOpen?.(component);
 
 			const inner = component.render(200).map((line) => line.trim());
 			// `panel-view.test.ts` pins the box layout, so a change there fails there first.
@@ -176,19 +188,22 @@ export function scriptedUI(options: ScriptedUIOptions = {}): ScriptedUI {
 		},
 	} as unknown as ExtensionUIContext;
 
-	return {
+	// Assembled last so `custom` can read `onDialogOpen`, which a test may set at any time.
+	const scripted = {
 		ui,
 		dialogs,
 		presentation,
 		notifications,
 		statuses,
 		editorTexts,
-		script: (...next) => {
+		repaints,
+		script: (...next: (string | undefined)[]) => {
 			answers.push(...next);
 		},
 		titles: () => dialogs.map((dialog) => dialog.title),
 		pendingAnswers: () => answers.length,
-	};
+	} as ScriptedUI;
+	return scripted;
 }
 
 /**

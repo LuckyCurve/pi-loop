@@ -125,7 +125,7 @@ Add a `piLoop` block to `settings.json`. Every key is optional.
     "expireAfterMs": 604800000,    // 7 days; 0 = never expire
     "maxLoops": 20,                // cap on concurrent loops
     "notifyEverySkip": false,      // true = notify on every skip, not once per streak
-    "statusRefreshMs": 15000       // footer countdown refresh; 0 disables it
+    "statusRefreshMs": 15000       // footer countdown refresh; 0 = show the status, drop the countdown
   }
 }
 ```
@@ -164,7 +164,7 @@ This project is developed test-first. See [AGENTS.md](AGENTS.md) for the working
 
 ```bash
 npm install
-npm test          # 156 tests
+npm test          # 160 tests
 npm run typecheck
 ```
 
