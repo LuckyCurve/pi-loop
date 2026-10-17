@@ -164,7 +164,7 @@ This project is developed test-first. See [AGENTS.md](AGENTS.md) for the working
 
 ```bash
 npm install
-npm test          # 157 tests
+npm test          # 155 tests
 npm run typecheck
 ```
 

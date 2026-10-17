@@ -27,7 +27,7 @@ function option(value: string, label: string): PanelOption {
 }
 
 /** Only the styling and geometry knobs are overridable; the callbacks are wired by the harness. */
-type Overridable = Pick<Parameters<typeof createPanelView>[0], "refreshMs" | "intro">;
+type Overridable = Pick<Parameters<typeof createPanelView>[0], "intro">;
 
 function makeView(overrides: Overridable = {}) {
 	const clock = new FakeClock(1_000_000);
@@ -251,19 +251,6 @@ describe("panel view countdown", () => {
 		expect(h.repaints).toHaveLength(3);
 		// Still armed: repainting is continuous while the box is open.
 		expect(h.clock.pending).toBe(1);
-	});
-
-	it("takes the repaint cadence as an option", () => {
-		const h = makeView({ refreshMs: 250 });
-		h.clock.advance(999);
-		expect(h.repaints).toHaveLength(3);
-	});
-
-	it("never arms a timer for a static dialog", () => {
-		const h = makeView({ refreshMs: 0 });
-		expect(h.clock.pending).toBe(0);
-		h.clock.advance(PANEL_REFRESH_MS * 10);
-		expect(h.repaints).toHaveLength(0);
 	});
 
 	it("stops repainting after dispose", () => {

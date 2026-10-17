@@ -24,7 +24,10 @@ import {
 import type { Clock } from "../../src/clock.ts";
 import { CLOSE_VALUE, noLoopsMessage, type PanelOption } from "../../src/panel.ts";
 
-/** One second, so the countdown moves like a clock rather than jumping in chunks. */
+/**
+ * One second, so a countdown moves like a clock rather than jumping in chunks. The panel always
+ * repaints: both of its dialogs show a countdown or a state, and pi repaints only on input.
+ */
 export const PANEL_REFRESH_MS = 1_000;
 
 /** How many rows the box shows before it scrolls, on a terminal tall enough to want more. */
@@ -81,8 +84,6 @@ export interface PanelViewInput {
 	 * block. For an action dialog the selection is an action, not the subject, so ignore the value.
 	 */
 	intro?: (selectedValue: string | undefined) => string | undefined;
-	/** Repaint cadence. 0 keeps a static box, for a dialog whose rows cannot change. */
-	refreshMs?: number;
 	/**
 	 * Lines the box may occupy, read on every render so a resize is respected. Rows beyond what the
 	 * box can show scroll, and the rows it shows are reduced to keep the borders on screen.
@@ -104,7 +105,6 @@ export interface PanelView extends Component {
 
 export function createPanelView(input: PanelViewInput): PanelView {
 	const theme = input.theme;
-	const refreshMs = input.refreshMs ?? PANEL_REFRESH_MS;
 	let timer: unknown;
 	let disposed = false;
 
@@ -144,13 +144,13 @@ export function createPanelView(input: PanelViewInput): PanelView {
 	}
 
 	function arm(): void {
-		if (disposed || refreshMs <= 0) return;
+		if (disposed) return;
 		timer = input.clock.setTimer(() => {
 			timer = undefined;
 			if (disposed) return;
 			input.requestRender();
 			arm();
-		}, refreshMs);
+		}, PANEL_REFRESH_MS);
 	}
 
 	/**

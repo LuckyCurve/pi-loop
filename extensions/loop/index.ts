@@ -351,7 +351,6 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 				load: () => readonly PanelOption[];
 				/** Full text for the highlighted row; see `createPanelView`. */
 				intro?: (selectedValue: string | undefined) => string | undefined;
-				refresh: boolean;
 			},
 		): Promise<PanelOption | undefined> {
 			if (ctx.mode !== "tui") {
@@ -373,7 +372,6 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 						title: dialog.title,
 						intro: dialog.intro,
 						hint: keyHintLine(),
-						refreshMs: dialog.refresh ? undefined : 0,
 						maxLines: () => panelLineBudget(tui.terminal.rows),
 						requestRender: () => tui.requestRender(),
 						onSelect: (value) => {
@@ -414,7 +412,6 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 						const loop = value === undefined ? undefined : engineRef.get(value);
 						return loop ? loopDetail(loop) : undefined;
 					},
-					refresh: true,
 				});
 				if (!selected) return;
 
@@ -449,8 +446,6 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 				title: () => loopHeading(loop, clock.now()),
 				intro: () => loopDetail(loop),
 				load: () => actionOptions(loop),
-				// The three actions never change, so a ticking repaint would only burn CPU.
-				refresh: false,
 			});
 			if (!selected) return "back";
 
