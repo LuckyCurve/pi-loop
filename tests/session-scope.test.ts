@@ -134,7 +134,6 @@ describe("session scope against the real runtime", () => {
 		const { session: sessionB, requests } = await boot(resumed);
 		cleanups.push(() => sessionB.dispose());
 
-		console.log("PROBE tools", sessionB.getActiveToolNames());
 		expect(sessionB.getActiveToolNames()).not.toContain(BREAK_TOOL_NAME);
 		await delay(2_500);
 		expect(requests, "a resumed session must not inherit the previous loop's schedule").toHaveLength(0);

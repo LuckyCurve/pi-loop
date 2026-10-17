@@ -54,16 +54,28 @@ function preview(prompt: string, maxChars = PREVIEW_CHARS): string {
 }
 
 /**
- * Why a paused loop is not running, in the user's terms. The cause matters more than the counts
- * here: `agent` means the model is waiting on an answer, `user` means you switched it off.
+ * How a stopped loop is described, in the user's terms. One table, so the caption, the row, and the
+ * detail block cannot disagree: `agent` means the model is waiting on an answer, `user` means you
+ * switched it off. The full sentence and the short word differ only in a suffix, because a row has
+ * to stay one line while the detail block does not.
  */
-function pauseLabel(loop: LoopRecord): string {
-	return loop.paused === "agent" ? "waiting for your answer" : "disabled by you";
+export function pauseWording(loop: LoopRecord): { state: string; waiting: boolean } | undefined {
+	if (!loop.paused) return undefined;
+	return loop.paused === "agent"
+		? { state: "paused", waiting: true }
+		: { state: "disabled", waiting: false };
 }
 
-/** The state word for the left column, so a disabled loop is not mistaken for a waiting one. */
+/** Short state word for a row or caption. */
 function stateLabel(loop: LoopRecord): string {
-	return loop.paused === "agent" ? "paused" : "disabled";
+	return pauseWording(loop)?.state ?? "";
+}
+
+/** Why a stopped loop is not running, as a sentence for the detail block. */
+function pauseLabel(loop: LoopRecord): string {
+	const wording = pauseWording(loop);
+	if (!wording) return "";
+	return wording.waiting ? "waiting for your answer" : "disabled by you";
 }
 
 function schedule(loop: LoopRecord): string {

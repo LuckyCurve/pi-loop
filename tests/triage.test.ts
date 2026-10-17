@@ -42,7 +42,12 @@ describe("triage workflow", () => {
       models: [{ id: "mm", name: "MM", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 4096 }],
     });
     const model = runtime.getModel("m", "mm")!;
-    const rl = new DefaultResourceLoader({ cwd: process.cwd(), agentDir: getAgentDir(), additionalExtensionPaths: ["./extensions/loop/index.ts"], noExtensions: true });
+    const rl = new DefaultResourceLoader({
+      cwd: process.cwd(),
+      agentDir: getAgentDir(),
+      additionalExtensionPaths: ["./extensions/loop/index.ts"],
+      noExtensions: true,
+    });
     await rl.reload();
     const { session } = await createAgentSession({ model, modelRuntime: runtime, resourceLoader: rl, sessionManager: SessionManager.inMemory(), cwd: process.cwd() });
     const ui = scriptedUI();

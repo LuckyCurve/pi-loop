@@ -6,6 +6,7 @@ import {
 	loopHeading,
 	loopOptions,
 	noLoopsMessage,
+	pauseWording,
 	optionTitle,
 } from "../src/panel.ts";
 
@@ -64,6 +65,16 @@ describe("loopDetail", () => {
 		);
 		expect(loopDetail(loop({ paused: "user" }))).toBe(`disabled by you${nl}check the deploy`);
 		expect(loopDetail(loop({ paused: "agent" }))).toBe(`waiting for your answer${nl}check the deploy`);
+	});
+});
+
+describe("pauseWording", () => {
+	it("is the single place a stopped loop is named", () => {
+		// The caption, the row, and the detail block all read this. They used to carry two parallel
+		// ternaries that could drift apart.
+		expect(pauseWording(loop())).toBeUndefined();
+		expect(pauseWording(loop({ paused: "agent" }))).toEqual({ state: "paused", waiting: true });
+		expect(pauseWording(loop({ paused: "user" }))).toEqual({ state: "disabled", waiting: false });
 	});
 });
 

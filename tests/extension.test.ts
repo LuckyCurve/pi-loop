@@ -7,54 +7,10 @@
 
 import { describe, expect, it } from "vitest";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Clock } from "../src/clock.ts";
+import { FakeClock } from "./helpers/fake-clock.ts";
 import { BREAK_TOOL_NAME, createLoopExtension, type LoopSettings } from "../extensions/loop/index.ts";
 import { isLoopInjection } from "../src/commands.ts";
 import { scriptedUI } from "./helpers/scripted-ui.ts";
-
-class FakeClock implements Clock {
-	time = 1_000_000;
-	private nextHandle = 1;
-	private timers = new Map<number, { at: number; fn: () => void }>();
-
-	now(): number {
-		return this.time;
-	}
-
-	setTimer(fn: () => void, delayMs: number): unknown {
-		const handle = this.nextHandle++;
-		this.timers.set(handle, { at: this.time + delayMs, fn });
-		return handle;
-	}
-
-	clearTimer(handle: unknown): void {
-		this.timers.delete(handle as number);
-	}
-
-	get pending(): number {
-		return this.timers.size;
-	}
-
-	advance(ms: number): void {
-		const target = this.time + ms;
-		for (;;) {
-			let nextHandle: number | undefined;
-			let nextAt = Number.POSITIVE_INFINITY;
-			for (const [handle, timer] of this.timers) {
-				if (timer.at <= target && timer.at < nextAt) {
-					nextAt = timer.at;
-					nextHandle = handle;
-				}
-			}
-			if (nextHandle === undefined) break;
-			const timer = this.timers.get(nextHandle)!;
-			this.timers.delete(nextHandle);
-			this.time = timer.at;
-			timer.fn();
-		}
-		this.time = target;
-	}
-}
 
 type Handler = (event: unknown, ctx: unknown) => unknown | Promise<unknown>;
 
@@ -96,7 +52,7 @@ interface Harness {
 }
 
 function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unknown[] } = {}): Harness {
-	const clock = new FakeClock();
+	const clock = new FakeClock(1_000_000);
 	const handlers = new Map<string, Handler[]>();
 	const sent: string[] = [];
 	const statuses: (string | undefined)[] = [];

@@ -237,6 +237,74 @@ describe("pi-loop against the real pi runtime", () => {
 	);
 
 	it(
+		"pins that slash commands are not reported as user input",
+		async () => {
+			// The loop resumes when the user replies. "Opened the panel" must not count as a reply, or
+			// a loop the model deliberately stopped would restart itself.
+			//
+			// This holds because pi dispatches a slash command without emitting `input` at all — a
+			// slash command never reaches the handler. That is an assumption about pi, not a guard in
+			// this extension (the handler cannot tell a command from a message it does receive), so it
+			// is pinned here: if pi ever starts emitting `input` for commands, this fails and the
+			// handler needs a real guard.
+			const { session, state, ui } = await boot((request, index) =>
+				index === 0 && request.tools.includes(BREAK_TOOL_NAME)
+					? { toolCall: { name: BREAK_TOOL_NAME, arguments: { reason: "which environment?" } } }
+					: { text: "ack" },
+			);
+			await session.prompt("/loop 1s WAIT_FOR_ME");
+			await session.waitForIdle();
+			await delay(2_500);
+			const whilePaused = state.requests.length;
+
+			ui.script("Close");
+			await session.prompt("/loop");
+			await session.waitForIdle();
+			await delay(2_500);
+
+			expect(
+				state.requests.length,
+				"opening the panel must not resume a loop that is waiting for an answer",
+			).toBe(whilePaused);
+			expect(state.requests.some((request) => /· run 2 ·/.test(request.text))).toBe(false);
+
+			await removeLoop(session, ui, "l1");
+			session.dispose();
+		},
+		120_000,
+	);
+
+	it(
+		"starts a turn from Run now even though the panel is on screen",
+		async () => {
+			// `Run now` injects a prompt through the same path a scheduled iteration uses, and it is
+			// clicked while an overlay holds keyboard focus. Whether that starts a run in a real
+			// session — rather than being swallowed or queued behind the dialog — is not something a
+			// fake can answer.
+			const { session, state, ui } = await boot(() => ({ text: "ack" }));
+			await session.prompt("/loop 1h WORK");
+			await session.waitForIdle();
+			const before = state.requests.length;
+
+			ui.script("l1", "Run now");
+			await session.prompt("/loop");
+			await session.waitForIdle();
+
+			const manual = state.requests.slice(before);
+			expect(manual, "Run now must deliver exactly one iteration").toHaveLength(1);
+			expect(manual[0]!.text).toMatch(/^\[loop l1 · run \d+ · every 1h\]\nWORK$/);
+
+			// The schedule is untouched: nothing else fires for an hour.
+			await delay(2_500);
+			expect(state.requests.slice(before)).toHaveLength(1);
+
+			await removeLoop(session, ui, "l1");
+			session.dispose();
+		},
+		120_000,
+	);
+
+	it(
 		"keeps the first loop injection as text even when the prompt starts with a slash",
 		async () => {
 			const { session, state, ui } = await boot(() => ({ text: "ack" }));
