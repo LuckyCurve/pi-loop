@@ -31,6 +31,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { BREAK_TOOL_NAME } from "../extensions/loop/index.ts";
 import { isLoopInjection } from "../src/commands.ts";
+import { removeLoop, scriptedUI, type ScriptedUI } from "./helpers/scripted-ui.ts";
 
 const PROVIDER_ID = "pi-loop-mock";
 
@@ -104,8 +105,9 @@ describe("pi-loop against the real pi runtime", () => {
 
 	async function boot(
 		script: (request: Request, index: number) => { text?: string; toolCall?: { name: string; arguments: Record<string, string> } },
-	): Promise<{ session: AgentSession; state: MockState }> {
+	): Promise<{ session: AgentSession; state: MockState; ui: ScriptedUI }> {
 		const state: MockState = { requests: [], slowFor: 0, holdMs: 1_500 };
+		const ui = scriptedUI();
 
 		const runtime = await ModelRuntime.create();
 		runtime.registerProvider(PROVIDER_ID, {
@@ -148,6 +150,7 @@ describe("pi-loop against the real pi runtime", () => {
 			cwd: process.cwd(),
 			agentDir: getAgentDir(),
 			additionalExtensionPaths: ["./extensions/loop/index.ts"],
+			noExtensions: true,
 		});
 		await resourceLoader.reload();
 
@@ -161,7 +164,10 @@ describe("pi-loop against the real pi runtime", () => {
 			// `loop_break`, and hide the activation behavior under test.
 		});
 		cleanups.push(() => session.dispose());
-		return { session, state };
+		// A UI is bound so `/loop` opens the panel instead of falling back to usage text. The
+		// scripted answers keep the management path exercised rather than poking the engine.
+		await session.bindExtensions({ uiContext: ui.ui, mode: "tui" });
+		return { session, state, ui };
 	}
 
 	async function waitFor(condition: () => boolean, label: string, timeoutMs = 20_000): Promise<void> {
@@ -173,7 +179,7 @@ describe("pi-loop against the real pi runtime", () => {
 	it(
 		"skips iterations during a run, injects when idle, and stops on request",
 		async () => {
-			const { session, state } = await boot(() => ({ text: "ack" }));
+			const { session, state, ui } = await boot(() => ({ text: "ack" }));
 
 			// 1. A 1s loop whose first iteration takes longer than its interval.
 			state.slowFor = 1;
@@ -189,9 +195,9 @@ describe("pi-loop against the real pi runtime", () => {
 			await waitFor(() => state.requests.length >= 2, "second iteration");
 			expect(state.requests[1]!.text).toMatch(/^\[loop l1 · run 2 · every 1s\]\ncheck the deploy$/);
 
-			// 4. `/loop stop all` ends it for good.
+			// 4. Removing it through the panel ends it for good.
 			await session.waitForIdle();
-			await session.prompt("/loop stop all");
+			await removeLoop(session, ui, "l1");
 			const count = state.requests.length;
 			await delay(2_500);
 			expect(state.requests.length, "stopped loop must not fire again").toBe(count);
@@ -201,15 +207,43 @@ describe("pi-loop against the real pi runtime", () => {
 	);
 
 	it(
+		"serves /loop through the UI panel: pick a loop, disable it, close",
+		async () => {
+			// The panel is two nested `ctx.ui.select()` calls. This asserts the dialog path works in a
+			// real session, which the fake UI in `extension.test.ts` cannot: a select() that is never
+			// wired would leave `/loop` silently doing nothing.
+			const { session, state, ui } = await boot(() => ({ text: "ack" }));
+
+			await session.prompt("/loop 1s WORK");
+			await session.waitForIdle();
+			ui.script("l1", "禁用", "关闭");
+			await session.prompt("/loop");
+			await session.waitForIdle();
+
+			expect(ui.dialogs[0]!.title).toBe("循环 (1)");
+			expect(ui.dialogs[0]!.options[0]).toContain("每 1s");
+			expect(ui.dialogs[0]!.options.at(-1)).toBe("关闭");
+			expect(ui.dialogs[1]!.options).toEqual(["禁用", "删除", "返回"]);
+			// Disabled: the loop is paused, so it is not due any more.
+			await delay(2_500);
+			expect(state.requests.filter((request) => /· run 2 ·/.test(request.text))).toHaveLength(0);
+
+			await removeLoop(session, ui, "l1");
+			session.dispose();
+		},
+		120_000,
+	);
+
+	it(
 		"keeps the first loop injection as text even when the prompt starts with a slash",
 		async () => {
-			const { session, state } = await boot(() => ({ text: "ack" }));
+			const { session, state, ui } = await boot(() => ({ text: "ack" }));
 			await session.prompt("/loop 1s /help");
 			await waitFor(() => state.requests.length >= 1, "slash-prompt iteration");
 			// `/help` must reach the model as prompt text, not as a slash command.
 			expect(state.requests[0]!.text).toBe("[loop l1 · run 1 · every 1s]\n/help");
 			await session.waitForIdle();
-			await session.prompt("/loop stop all");
+			await removeLoop(session, ui, "l1");
 		},
 		120_000,
 	);
@@ -219,7 +253,7 @@ describe("pi-loop against the real pi runtime", () => {
 		async () => {
 			// Break only on the first iteration. The mock is called again for every tool result
 			// inside the same run, and asking to break a second time has nothing to pause.
-			const { session, state } = await boot((request, index) =>
+			const { session, state, ui } = await boot((request, index) =>
 				index === 0 && request.tools.includes(BREAK_TOOL_NAME)
 					? { toolCall: { name: BREAK_TOOL_NAME, arguments: { reason: "Which environment is the target?" } } }
 					: { text: "ack" },
@@ -246,7 +280,7 @@ describe("pi-loop against the real pi runtime", () => {
 			);
 
 			await session.waitForIdle();
-			await session.prompt("/loop stop all");
+			await removeLoop(session, ui, "l1");
 			const count = state.requests.length;
 			await delay(2_500);
 			expect(state.requests.length).toBe(count);

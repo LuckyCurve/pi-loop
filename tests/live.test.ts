@@ -9,6 +9,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import { createAgentSession, DefaultResourceLoader, getAgentDir, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import { isLoopInjection } from "../src/commands.ts";
+import { removeLoop, scriptedUI } from "./helpers/scripted-ui.ts";
 
 describe("live smoke", () => {
 	it("iterates a real /loop more than once with the configured model", async () => {
@@ -24,6 +25,7 @@ describe("live smoke", () => {
 			cwd: process.cwd(),
 			agentDir: getAgentDir(),
 			additionalExtensionPaths: ["./extensions/loop/index.ts"],
+			noExtensions: true,
 		});
 		await rl.reload();
 		const { session } = await createAgentSession({
@@ -33,6 +35,8 @@ describe("live smoke", () => {
 			sessionManager: SessionManager.inMemory(),
 			cwd: process.cwd(),
 		});
+		const ui = scriptedUI();
+		await session.bindExtensions({ uiContext: ui.ui, mode: "tui" });
 		const iterations: string[] = [];
 		session.subscribe((event) => {
 			if (event.type === "message_start" && (event as { message?: { role?: string } }).message?.role === "user") {
@@ -57,12 +61,12 @@ describe("live smoke", () => {
 		expect(iterations[1], "the second iteration increments the run counter").toMatch(/run 2/);
 
 		await session.waitForIdle();
-		await session.prompt("/loop stop all");
+		await removeLoop(session, ui, "l1");
 		const after = iterations.length;
 		await delay(3_000);
 
 		console.log(`live iterations: ${iterations.length} (${iterations.join(", ")})`);
-		expect(iterations.length, "iterations must not keep coming after /loop stop all").toBe(after);
+		expect(iterations.length, "iterations must not keep coming after the loop is removed").toBe(after);
 		session.dispose();
 	}, 120_000);
 });

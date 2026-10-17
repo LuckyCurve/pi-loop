@@ -10,6 +10,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { Clock } from "../src/clock.ts";
 import { BREAK_TOOL_NAME, createLoopExtension, type LoopSettings } from "../extensions/loop/index.ts";
 import { isLoopInjection } from "../src/commands.ts";
+import { scriptedUI } from "./helpers/scripted-ui.ts";
 
 class FakeClock implements Clock {
 	time = 1_000_000;
@@ -75,12 +76,17 @@ interface Harness {
 	failAppend: boolean;
 	/** Fire one handler group. */
 	emit(event: string, payload?: unknown): Promise<void>;
-	sessionStart(branch?: unknown[]): Promise<void>;
+	sessionStart(branch?: unknown[], reason?: string): Promise<void>;
 	invokeCommand(args: string): Promise<void>;
 	invokeTool(args: { reason: string; id?: string }): Promise<{ details: { paused: string[]; reason: string } }>;
 	activateTool(name: string): void;
 	/** Event names the extension subscribed to. */
 	registeredEvents: string[];
+	setNoUI(value: boolean): void;
+	/** Queue answers for the dialogs the extension opens, in call order. */
+	queueSelect(...answers: (string | undefined)[]): void;
+	/** Every dialog the extension showed, with the rows it rendered. */
+	selects: { title: string; options: string[] }[];
 }
 
 function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unknown[] } = {}): Harness {
@@ -92,7 +98,7 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 	const editorTexts: string[] = [];
 	const entries: { customType: string; data: unknown }[] = [];
 	let tools: string[] = ["read", "bash", "edit", "write"];
-	const state = { busy: false, stale: false, failAppend: false };
+	const state = { busy: false, stale: false, failAppend: false, noUI: false };
 
 	let commandHandler: ((args: string, ctx: ExtensionContext) => Promise<void>) | undefined;
 	interface ToolResult {
@@ -101,9 +107,20 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 	}
 	let toolExecute: ((id: string, params: { reason: string; id?: string }, ctx: ExtensionContext) => Promise<ToolResult>) | undefined;
 
+	const scripted = scriptedUI({
+		// pi throws from every ctx accessor once the session is replaced; the extension must absorb
+		// that inside a timer callback, where nothing else can catch it.
+		onNotify: () => {
+			if (state.stale) throw new Error("This extension ctx is stale after session replacement or reload.");
+		},
+	});
+	const ui = scripted.ui;
+
 	const ctx = {
 		mode: "tui",
-		hasUI: true,
+		get hasUI() {
+			return !state.noUI;
+		},
 		cwd: process.cwd(),
 		isIdle: () => {
 			if (state.stale) throw new Error("This extension ctx is stale after session replacement or reload.");
@@ -119,17 +136,7 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 				return options.branch ?? [];
 			},
 		},
-		ui: {
-			notify: (message: string, level?: string) => {
-				notifications.push({ message, level: level ?? "info" });
-			},
-			setStatus: (_key: string, text: string | undefined) => {
-				statuses.push(text);
-			},
-			setEditorText: (text: string) => {
-				editorTexts.push(text);
-			},
-		},
+		ui,
 	} as unknown as ExtensionContext;
 
 	const api = {
@@ -176,10 +183,12 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 		clock,
 		api,
 		sent,
-		statuses,
-		notifications,
-		editorTexts,
+		notifications: scripted.notifications,
+		editorTexts: scripted.editorTexts,
+		statuses: scripted.statuses,
 		entries,
+		selects: scripted.dialogs,
+		queueSelect: scripted.script,
 		// Read through so tests observe the current activation set.
 		get tools(): string[] {
 			return [...tools];
@@ -193,10 +202,13 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 		set failAppend(value: boolean) {
 			state.failAppend = value;
 		},
+		setNoUI: (value: boolean) => {
+			state.noUI = value;
+		},
 		emit,
-		async sessionStart(branch: unknown[] = options.branch ?? []) {
+		async sessionStart(branch: unknown[] = options.branch ?? [], reason = "reload") {
 			void branch;
-			await emit("session_start", { type: "session_start", reason: "startup" });
+			await emit("session_start", { type: "session_start", reason });
 		},
 		async invokeCommand(args: string) {
 			if (!commandHandler) throw new Error("command not registered");
@@ -267,29 +279,114 @@ describe("loop extension", () => {
 		expect(state?.loops[0]!.skips).toBe(1);
 	});
 
-	it("lists, pauses, resumes, and stops loops", async () => {
+	it("disables and re-enables a loop from the panel", async () => {
 		const h = await startedHarness();
-		await h.invokeCommand("list");
-		expect(h.editorTexts.at(-1)).toContain("l1");
 
-		await h.invokeCommand("pause l1");
-		expect(h.notifications.at(-1)!.message).toMatch(/Paused 1/);
+		h.queueSelect("l1", "禁用");
+		await h.invokeCommand("");
+		expect(h.notifications.at(-1)!.message).toMatch(/已禁用 1/);
 		h.clock.advance(600_000);
 		expect(h.sent).toHaveLength(1);
 
-		await h.invokeCommand("resume l1");
+		h.queueSelect("l1", "启用");
+		await h.invokeCommand("");
+		expect(h.notifications.at(-1)!.message).toMatch(/已启用 1/);
 		h.clock.advance(300_000);
 		expect(h.sent).toHaveLength(2);
+	});
 
-		await h.invokeCommand("stop all");
+	it("shows usage when a start command is malformed", async () => {
+		const h = await startedHarness();
+		// A bare interval has no prompt: that is an error, so the usage text wins over the panel.
+		await h.invokeCommand("5m");
+		expect(h.editorTexts.at(-1)).toContain("missing prompt");
+		expect(h.selects).toHaveLength(0);
+	});
+
+	it("opens the panel on a bare /loop in a UI session", async () => {
+		const h = await startedHarness();
+		h.queueSelect("关闭");
+		await h.invokeCommand("");
+
+		// The panel lists the loop, not the usage text: the popup is the primary surface.
+		expect(h.selects[0]!.title).toBe("循环 (1)");
+		expect(h.selects[0]!.options[0]).toContain("l1");
+		expect(h.selects[0]!.options[0]).toContain("每 5m");
+		expect(h.selects[0]!.options[0]).toContain("check the deploy");
+		expect(h.selects[0]!.options.at(-1)).toBe("关闭");
+		expect(h.editorTexts).toHaveLength(0);
+	});
+
+	it("removes a loop from the panel", async () => {
+		const h = await startedHarness();
+		h.queueSelect("l1", "删除");
+		await h.invokeCommand("");
+
+		expect(h.selects[1]!.options).toEqual(["禁用", "删除", "返回"]);
+		expect(h.notifications.at(-1)!.message).toMatch(/已删除 1/);
 		expect(h.tools).not.toContain(BREAK_TOOL_NAME);
 		expect(h.clock.pending).toBe(0);
 	});
 
-	it("shows usage for a bare /loop", async () => {
+	it("disables a loop from the panel and enables it again", async () => {
 		const h = await startedHarness();
+		h.queueSelect("l1", "禁用");
 		await h.invokeCommand("");
-		expect(h.editorTexts.at(-1)).toContain("Usage: /loop");
+
+		expect(h.notifications.at(-1)!.message).toMatch(/已禁用 1/);
+		h.clock.advance(600_000);
+		expect(h.sent).toHaveLength(1);
+		// A disabled loop is still managed, so the break tool stays available.
+		expect(h.tools).toContain(BREAK_TOOL_NAME);
+
+		const before = h.selects.length;
+		h.queueSelect("l1", "启用");
+		await h.invokeCommand("");
+		// The action selector for a paused loop offers 启用, not 禁用.
+		expect(h.selects[before + 1]!.options).toEqual(["启用", "删除", "返回"]);
+		expect(h.notifications.at(-1)!.message).toMatch(/已启用 1/);
+		h.clock.advance(300_000);
+		expect(h.sent).toHaveLength(2);
+	});
+
+	it("leaves everything alone when the panel is dismissed", async () => {
+		const h = await startedHarness();
+		// No queued answer: the fake resolves undefined, which is what Esc does.
+		await h.invokeCommand("");
+		expect(h.sent).toHaveLength(1);
+		expect(h.tools).toContain(BREAK_TOOL_NAME);
+		expect(h.clock.pending).toBeGreaterThan(0);
+	});
+
+	it("says nothing is running instead of opening an empty panel", async () => {
+		const h = makeHarness();
+		await h.sessionStart();
+		await h.invokeCommand("");
+		expect(h.selects).toHaveLength(0);
+		expect(h.notifications.at(-1)!.message).toBe("当前没有运行中的循环。");
+	});
+
+	it("shows only the current session's loops, and none after a switch", async () => {
+		const h = await startedHarness();
+		expect(h.selects).toHaveLength(0);
+
+		// Switching away and back: the loop belonged to the conversation that started it, so the
+		// panel must be empty rather than offering a loop that no longer exists.
+		await h.emit("session_shutdown", { type: "session_shutdown", reason: "resume" });
+		await h.sessionStart([], "resume");
+		// No dialog is opened at all, so nothing is queued for one.
+		await h.invokeCommand("");
+
+		expect(h.selects).toHaveLength(0);
+		expect(h.notifications.at(-1)!.message).toBe("当前没有运行中的循环。");
+	});
+
+	it("falls back to the usage text without a UI", async () => {
+		const h = await startedHarness();
+		h.setNoUI(true);
+		await h.invokeCommand("");
+		expect(h.selects).toHaveLength(0);
+		expect(h.notifications.at(-1)!.message).toContain("Usage: /loop");
 	});
 
 	it("pauses the loop when the model calls loop_break", async () => {
@@ -335,7 +432,7 @@ describe("loop extension", () => {
 		expect((h.entries.at(-1)!.data as { loops: { paused?: string }[] }).loops[0]!.paused).toBe("agent");
 	});
 
-	it("restores loops from the session branch without firing them", async () => {
+	it("restores loops on /reload without firing them", async () => {
 		const branch = [
 			{
 				type: "custom",
@@ -344,7 +441,7 @@ describe("loop extension", () => {
 			},
 		];
 		const h = makeHarness({ branch });
-		await h.sessionStart(branch);
+		await h.sessionStart(branch, "reload");
 		expect(h.sent).toHaveLength(0);
 		expect(h.notifications.some((n) => /Restored 1 loop/.test(n.message))).toBe(true);
 
@@ -357,11 +454,43 @@ describe("loop extension", () => {
 		expect(h.sent[0]).toContain("restored task");
 	});
 
-	it("stops everything on session shutdown", async () => {
-		const h = await startedHarness();
-		await h.emit("session_shutdown", { type: "session_shutdown", reason: "quit" });
-		expect(h.clock.pending).toBe(0);
-	});
+	it.each(["startup", "new", "resume", "fork"] as const)(
+		"does not resurrect loops when a session starts with reason %s",
+		async (reason) => {
+			// A loop belongs to the conversation that started it. Reopening that conversation — or
+			// switching to another one that once had loops — must not restart the schedule.
+			const branch = [
+				{
+					type: "custom",
+					customType: "pi-loop-state",
+					data: { counter: 3, loops: [{ id: "l3", prompt: "old task", intervalMs: 60_000, createdAt: 0, runs: 5, skips: 0, consecutiveSkips: 0, nextAt: 0 }] },
+				},
+			];
+			const h = makeHarness({ branch });
+			await h.sessionStart(branch, reason);
+
+			expect(h.sent).toHaveLength(0);
+			expect(h.tools).not.toContain(BREAK_TOOL_NAME);
+			expect(h.clock.pending).toBe(0);
+			h.clock.advance(10 * 60_000);
+			expect(h.sent).toHaveLength(0);
+		},
+	);
+
+	it.each(["quit", "reload", "new", "resume", "fork"] as const)(
+		"drops the schedule and the footer when the session shuts down for %s",
+		async (reason) => {
+			const h = await startedHarness();
+			expect(h.statuses.at(-1)).toBeDefined();
+			await h.emit("session_shutdown", { type: "session_shutdown", reason });
+			expect(h.clock.pending).toBe(0);
+			// The footer is cleared, so a dying loop cannot leave a countdown in the next session.
+			expect(h.statuses.at(-1)).toBeUndefined();
+			// Nothing may fire into the conversation that is being replaced.
+			h.clock.advance(10 * 60_000);
+			expect(h.sent).toHaveLength(1);
+		},
+	);
 
 	it("shuts the loop down instead of throwing when the context goes stale", async () => {
 		// pi throws from `isIdle()` once the session is replaced, reloaded, or disposed. That
@@ -375,6 +504,16 @@ describe("loop extension", () => {
 		expect(() => h.clock.advance(1_000)).not.toThrow();
 		expect(h.sent).toHaveLength(1);
 		// The engine is gone: nothing is armed any more.
+		expect(h.clock.pending).toBe(0);
+	});
+
+	it("survives a stale context that throws from notify, not just from isIdle", async () => {
+		// A skip notifies, so `notify` is reachable from the timer too. If it throws, the whole
+		// process sees an uncaught exception from a setTimeout.
+		const h = await startedHarness();
+		h.setBusy(true);
+		h.stale = true;
+		expect(() => h.clock.advance(300_000)).not.toThrow();
 		expect(h.clock.pending).toBe(0);
 	});
 

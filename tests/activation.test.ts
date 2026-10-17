@@ -21,6 +21,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type AssistantMessage, createAssistantMessageEventStream, getCurrentTools, type Tool } from "@earendil-works/pi-ai";
 import { BREAK_TOOL_NAME } from "../extensions/loop/index.ts";
+import { disableLoop, removeLoop, scriptedUI } from "./helpers/scripted-ui.ts";
 
 const PROVIDER_ID = "pi-loop-activation-mock";
 
@@ -30,8 +31,9 @@ interface SeenRequest {
 }
 
 /** Boot a real session whose provider records what the model was actually offered. */
-async function boot(): Promise<{ session: AgentSession; seen: SeenRequest[] }> {
+async function boot(): Promise<{ session: AgentSession; seen: SeenRequest[]; ui: ReturnType<typeof scriptedUI> }> {
 	const seen: SeenRequest[] = [];
+	const ui = scriptedUI();
 	const runtime = await ModelRuntime.create();
 	runtime.registerProvider(PROVIDER_ID, {
 		name: "activation mock",
@@ -92,6 +94,7 @@ async function boot(): Promise<{ session: AgentSession; seen: SeenRequest[] }> {
 		cwd: process.cwd(),
 		agentDir: getAgentDir(),
 		additionalExtensionPaths: ["./extensions/loop/index.ts"],
+			noExtensions: true,
 	});
 	await resourceLoader.reload();
 	const { session } = await createAgentSession({
@@ -101,7 +104,8 @@ async function boot(): Promise<{ session: AgentSession; seen: SeenRequest[] }> {
 		sessionManager: SessionManager.inMemory(),
 		cwd: process.cwd(),
 	});
-	return { session, seen };
+	await session.bindExtensions({ uiContext: ui.ui, mode: "tui" });
+	return { session, seen, ui };
 }
 
 /** Wait until the provider has been asked at least `count` times. */
@@ -113,7 +117,7 @@ async function waitForRequests(seen: SeenRequest[], count: number, timeoutMs = 2
 
 describe("tool activation tracks the loop", () => {
 	it("offers loop_break to the model while a loop runs", async () => {
-		const { session, seen } = await boot();
+		const { session, seen, ui } = await boot();
 		await session.prompt("/loop 1s WORK");
 		await waitForRequests(seen, 1);
 
@@ -121,18 +125,18 @@ describe("tool activation tracks the loop", () => {
 		expect(seen[0]!.tools).toContain(BREAK_TOOL_NAME);
 
 		await session.waitForIdle();
-		await session.prompt("/loop stop all");
+		await removeLoop(session, ui, "l1");
 		session.dispose();
 	}, 60_000);
 
 	it("stops offering loop_break after the loop is stopped, even to an in-flight run", async () => {
-		const { session, seen } = await boot();
+		const { session, seen, ui } = await boot();
 		await session.prompt("/loop 1s WORK");
 		await waitForRequests(seen, 1);
 
 		// Stop the loop, then make the model run again. The new request must not carry the tool.
 		await session.waitForIdle();
-		await session.prompt("/loop stop all");
+		await removeLoop(session, ui, "l1");
 		await session.waitForIdle();
 		await session.prompt("plain turn after stop");
 		await waitForRequests(seen, 2);
@@ -145,11 +149,11 @@ describe("tool activation tracks the loop", () => {
 	}, 60_000);
 
 	it("re-offers loop_break when a new loop starts after an earlier stop", async () => {
-		const { session, seen } = await boot();
+		const { session, seen, ui } = await boot();
 		await session.prompt("/loop 1s FIRST");
 		await waitForRequests(seen, 1);
 		await session.waitForIdle();
-		await session.prompt("/loop stop all");
+		await removeLoop(session, ui, "l1");
 		await session.waitForIdle();
 		await session.prompt("turn with no loop");
 		await waitForRequests(seen, 2);
@@ -160,16 +164,16 @@ describe("tool activation tracks the loop", () => {
 		expect(seen.at(-1)!.tools, "a started loop declares loop_break again").toContain(BREAK_TOOL_NAME);
 
 		await session.waitForIdle();
-		await session.prompt("/loop stop all");
+		await removeLoop(session, ui, "l1");
 		session.dispose();
 	}, 60_000);
 
 	it("keeps loop_break while the loop is merely paused", async () => {
-		const { session, seen } = await boot();
+		const { session, seen, ui } = await boot();
 		await session.prompt("/loop 1s WORK");
 		await session.waitForIdle();
 		await session.waitForIdle();
-		await session.prompt("/loop pause l1");
+		await disableLoop(session, ui, "l1");
 		await session.waitForIdle();
 		await session.prompt("turn while paused");
 		await session.waitForIdle();
@@ -178,7 +182,7 @@ describe("tool activation tracks the loop", () => {
 		expect(seen.at(-1)!.tools, "a paused loop still declares loop_break").toContain(BREAK_TOOL_NAME);
 
 		await session.waitForIdle();
-		await session.prompt("/loop stop all");
+		await removeLoop(session, ui, "l1");
 		session.dispose();
 	}, 60_000);
 });

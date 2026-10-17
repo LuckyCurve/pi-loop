@@ -38,15 +38,24 @@ pi -e ./extensions/loop/index.ts       # one-off, no install
 
 ## Commands
 
+Two forms, nothing else:
+
 | Command | What it does |
 |---|---|
 | `/loop 5m <prompt>` | Run `<prompt>` every 5 minutes, first run immediately |
 | `/loop <prompt> every 20m` | Interval as a trailing clause |
 | `/loop <prompt>` | No interval: uses `defaultIntervalMs` (10m) |
-| `/loop list` | Show running loops: ids, run/skip counts, next fire time |
-| `/loop stop [id\|all]` | Remove one loop or all of them |
-| `/loop pause [id\|all]` | Pause without removing |
-| `/loop resume [id\|all]` | Resume paused loops |
+| `/loop` | Open the management panel: see, disable, or remove loops |
+
+There are no management subcommands — no `list`, `stop`, `pause`, or `resume` to remember. A bare
+`/loop` opens one panel with a row per loop: schedule and state on the left, counters and the prompt
+on the right. Selecting a row offers **禁用** (disable — a pause, resumable), **删除** (remove), and
+**返回**; the panel itself closes with **关闭** or Esc. Nothing running means no popup at all, just
+"当前没有运行中的循环。" Everything else is a plain prompt: `/loop stop the deploy check` starts a
+loop, it does not stop one.
+
+The panel only ever shows the loops of the **current session**. Close it, switch sessions, or fork,
+and there is nothing to see — those loops are gone, not hidden.
 
 Intervals accept `ms`, `s`, `m`, `h`, and `d` (`30s`, `5m`, `2h`, `1d`), clamped to 1 second …
 7 days. A slash command in the prompt (for example `/loop 20m /review-pr 1234`) is sent to the
@@ -61,9 +70,9 @@ The extension registers a `loop_break` tool, declared to the model **only while 
 { "reason": "Which environment should I target? Staging or production?" }
 ```
 
-Calling it **pauses** the loop rather than deleting it, records the reason in `/loop list`, and
+Calling it **pauses** the loop rather than deleting it, records the reason in the `/loop` panel, and
 tells the model to ask you and end its turn. **Your next message resumes the loop automatically.**
-Manual resuming stays available with `/loop resume`.
+You can also re-enable it by hand from the panel.
 
 The intended pattern for work that needs human input:
 
@@ -78,14 +87,14 @@ The intended pattern for work that needs human input:
 An iteration that comes due while the agent is running is **skipped, never queued**. Queuing would
 silently pile work behind a long turn and then deliver all of it at once, which is neither what you
 asked for nor cheap. A skip is reported once per streak, the loop retries one interval later, and
-`runs` and `skips` are tracked separately so `/loop list` shows what actually happened.
+`runs` and `skips` are tracked separately so the panel and the footer show what actually happened.
 
 ## The footer
 
 While a loop is running, the status line shows the closest upcoming fire:
 
 ```
-⟳ l1 every 5m · next 2m30s · runs 4 · skips 1 · +1 more
+⟳ LOOP l1 · every 5m · next 2m30s · runs 4 · skips 1 · +1 more
 ```
 
 ## Settings
@@ -109,10 +118,12 @@ Add a `piLoop` block to `settings.json`. Every key is optional.
 
 - **Loops live in the pi process.** Close pi and they stop. There is no background daemon and no
   cloud scheduler.
-- **No catch-up burst.** After a resume (or `/reload`), every loop waits one interval before firing,
-  so restoring a session never dumps a pile of stale prompts at once.
-- **Loops survive `/reload`.** State is written to a session entry (`pi-loop-state`) and rebuilt
-  from the **active branch**, so loops on an abandoned branch do not come back.
+- **Loops belong to the session that started them.** Quitting, starting a new session, resuming
+  another one, or forking all drop the schedule: no timer may inject prompts into a different
+  conversation, and a conversation that once had loops does not restart them.
+- **`/reload` is the exception.** It rebuilds the same conversation in place, so loops are restored
+  from a session entry (`pi-loop-state`) and the **active branch**, after waiting one interval — a
+  reload never dumps a pile of stale prompts at once.
 - **A paused loop stays listed** with its reason, so a long block never looks like a crash.
 - **A removed loop is gone.** Nothing auto-restarts it; run `/loop` again.
 
@@ -126,6 +137,7 @@ The scheduling rules have no dependency on pi, which is what makes them testable
 | `src/engine.ts` | scheduling, skipping, pausing, persistence — pure logic |
 | `src/duration.ts` | interval parsing and formatting |
 | `src/commands.ts` | `/loop` argument grammar, prompt framing, injection detection |
+| `src/panel.ts` | the management panel's rows and the action each dispatches |
 | `src/clock.ts` | injectable clock, so tests control time |
 | `src/status.ts` | footer status line |
 
@@ -135,7 +147,7 @@ This project is developed test-first. See [AGENTS.md](AGENTS.md) for the working
 
 ```bash
 npm install
-npm test          # 70 tests
+npm test          # 110 tests
 npm run typecheck
 ```
 
@@ -149,6 +161,11 @@ Test layers, cheapest first:
   the fakes cannot: iterations are not queued behind a running turn, prompts sent with
   `expandPromptTemplates: false` reach the model as text, `loop_break` is declared exactly while a
   loop exists, and a real user message resumes an agent-paused loop
+- `tests/panel.test.ts` — the panel's rows and the action each one dispatches
+- `tests/session-scope.test.ts` — real-runtime session scope: a resumed session stays inert while
+  `/reload` restores
+- `tests/isolation.test.ts` — the loader configuration every test uses, so `npm test` never loads
+  the developer's installed extensions
 - `tests/activation.test.ts` — real-runtime regression: `loop_break` is offered exactly while a
   loop exists, including after a loop ends mid-run
 - `tests/triage.test.ts` — the defect-triage workflow end to end
@@ -166,7 +183,7 @@ Two deliberate differences:
    stop and scheduling nothing next. Here the pause is an explicit, testable operation that records
    *why* the loop stopped and resumes on your reply.
 2. **Skips are counted, not silent.** Because an iteration never queues, "did the loop actually run
-   while I was away?" has a real answer, visible in `/loop list` and the footer.
+   while I was away?" has a real answer, visible in the `/loop` panel and the footer.
 
 ## License
 

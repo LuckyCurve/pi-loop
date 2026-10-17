@@ -1,26 +1,38 @@
 /**
  * pi-loop — recurring prompt loops for pi.
  *
- *   /loop 5m check the deploy          run the prompt every 5 minutes (first run immediately)
- *   /loop check CI every 20m           interval as a trailing clause
- *   /loop check the deploy             no interval: uses the default
- *   /loop list | /loop stop [id|all] | /loop pause [id|all] | /loop resume [id|all]
+ *   /loop 5m check the deploy   run the prompt every 5 minutes (first run immediately)
+ *   /loop check CI every 20m     interval as a trailing clause
+ *   /loop check the deploy       no interval: uses the default
+ *   /loop                        open the management panel: see, disable, remove
  *
  * Behaviour:
  * - An iteration is skipped (never queued) while the agent is running, so a loop cannot pile
  *   up work behind a long turn.
  * - The model can stop a loop with the `loop_break` tool: the loop is paused instead of
  *   deleted, the reason is recorded, and the user's next message resumes it automatically.
- * - Loops live for the session, survive `/reload` through a session entry, and expire after
- *   `expireAfterMs` (7 days by default).
+ * - A loop belongs to the session that started it. Quitting, a new session, resume, and fork all
+ *   drop the schedule; only `/reload` restores it, from a session entry, after one interval.
+ *   Loops expire after `expireAfterMs` (7 days by default).
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
+import { Container, SelectList, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { formatDuration } from "../../src/duration.ts";
-import { formatInjection, formatLoopLine, isLoopInjection, parseLoopCommand, usageText } from "../../src/commands.ts";
+import { formatInjection, isLoopInjection, parseLoopCommand, usageText } from "../../src/commands.ts";
 import { type Clock, systemClock } from "../../src/clock.ts";
 import { DEFAULT_EXPIRE_MS, DEFAULT_MAX_LOOPS, LoopEngine, type LoopRecord, type NotifyLevel } from "../../src/engine.ts";
+import {
+	actionOptions,
+	loopHeading,
+	loopOptions,
+	noLoopsMessage,
+	optionTitle,
+	type PanelAction,
+	type PanelOption,
+} from "../../src/panel.ts";
 import { composeStatus } from "../../src/status.ts";
 
 const STATE_TYPE = "pi-loop-state";
@@ -96,7 +108,12 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			if (message === lastNotifyMessage && now - lastNotifyAt < 5_000) return;
 			lastNotifyMessage = message;
 			lastNotifyAt = now;
-			ctxRef?.ui.notify(message, level);
+			try {
+				ctxRef?.ui.notify(message, level);
+			} catch {
+				// `notify` is reachable from a timer (a skip reports), and a stale context throws
+				// from every accessor. Nothing above a timer can catch that, so absorb it here.
+			}
 		}
 
 		/**
@@ -236,18 +253,25 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 		/**
 		 * The engine is created on demand instead of only in `session_start`: the SDK and print modes
 		 * can run a session without ever emitting that event, and `/loop` must still work there.
+		 * Nothing is restored here — loops belong to the session that started them.
 		 */
 		function ensureEngine(ctx: ExtensionContext): LoopEngine {
 			settings = readSettings(pi, options.settings);
 			if (!engine) {
 				ctxRef = ctx;
 				engine = createEngine(ctx);
-				restoreFromBranch(ctx);
 			}
 			return engine;
 		}
 
-		/** Reload loops from the active branch, so abandoned branches never resurrect them. */
+		/**
+		 * Reload loops from the active branch, so abandoned branches never resurrect them.
+		 *
+		 * Only `/reload` restores. That event rebuilds the *same* conversation in place, while
+		 * startup, new, resume, and fork all open a different one — a timer left over from another
+		 * conversation would inject prompts into the wrong transcript, and resurrecting its loops
+		 * would silently restart work the user did not ask for again.
+		 */
 		function restoreFromBranch(ctx: ExtensionContext): void {
 			if (!engine) return;
 			let snapshot: unknown;
@@ -263,28 +287,172 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			syncStatusTimer();
 		}
 
-		pi.on("session_start", async (_event, ctx) => {
+		/** Clear the footer key so a loop from a closed session cannot linger in the next one. */
+		function clearStatus(ctx: ExtensionContext): void {
+			try {
+				ctx.ui.setStatus(STATUS_KEY, undefined);
+			} catch {
+				// The session is already going away; the footer goes with it.
+			}
+			lastStatus = undefined;
+		}
+
+		pi.on("session_start", async (event, ctx) => {
 			ctxRef = ctx;
 			settings = readSettings(pi, options.settings);
 			disposeEngine();
 			engine = createEngine(ctx);
 			lastStatus = undefined;
-			restoreFromBranch(ctx);
+			if (event.reason === "reload") restoreFromBranch(ctx);
+			else syncToolActivation();
 		});
 
-		pi.on("session_shutdown", async () => {
+		pi.on("session_shutdown", async (_event, ctx) => {
+			// Runs for quit, reload, new, resume, and fork. Each one ends this conversation's claim on
+			// the timer; a reload restores from the branch in the `session_start` that follows.
+			clearStatus(ctx);
 			disposeEngine();
 			ctxRef = undefined;
 		});
 
 		// ------------------------------------------------------------ user commands
 
+		/**
+		 * Show one dialog and return the chosen row.
+		 *
+		 * Interactive mode gets a real `SelectList`, so a row can carry the schedule on one side and
+		 * the prompt on the other. RPC cannot render custom components, and print/JSON have no UI at
+		 * all, so those fall back to `ctx.ui.select()`.
+		 */
+		async function choose(
+			ctx: ExtensionContext,
+			title: string,
+			options: readonly PanelOption[],
+		): Promise<PanelOption | undefined> {
+			if (ctx.mode !== "tui") {
+				if (!ctx.hasUI) return undefined;
+				const labels = options.map((option) => option.label);
+				const picked = await ctx.ui.select(title, labels);
+				if (picked === undefined) return undefined;
+				return options[labels.indexOf(picked)];
+			}
+
+			const selected = await ctx.ui.custom<string | undefined>((tui, theme, _keybindings, done) => {
+				const container = new Container();
+				container.addChild(new DynamicBorder((line) => theme.fg("accent", line)));
+				container.addChild(new Text(theme.fg("accent", theme.bold(title)), 1, 0));
+
+				const list = new SelectList(
+					options.map((option) => ({ value: option.value, label: option.label, description: option.description })),
+					Math.min(Math.max(options.length, 1), 12),
+					{
+						selectedPrefix: (text) => theme.fg("accent", text),
+						selectedText: (text) => theme.fg("accent", text),
+						description: (text) => theme.fg("muted", text),
+						scrollInfo: (text) => theme.fg("dim", text),
+						noMatch: (text) => theme.fg("warning", text),
+					},
+				);
+				list.onSelect = (item) => done(item.value);
+				list.onCancel = () => done(undefined);
+				container.addChild(list);
+				container.addChild(new Text(theme.fg("dim", "↑↓ 选择 · Enter 确认 · Esc 取消"), 1, 0));
+				container.addChild(new DynamicBorder((line) => theme.fg("accent", line)));
+
+				return {
+					render: (width: number) => container.render(width),
+					invalidate: () => container.invalidate(),
+					handleInput: (data: string) => {
+						list.handleInput(data);
+						tui.requestRender();
+					},
+				};
+			});
+
+			return options.find((option) => option.value === selected);
+		}
+
+		/**
+		 * The management surface: the loop list, then the actions for the chosen loop, until the user
+		 * closes the panel or leaves nothing to manage.
+		 */
+		async function openPanel(ctx: ExtensionContext, engineRef: LoopEngine): Promise<void> {
+			for (;;) {
+				const loops = engineRef.list();
+				const options = loopOptions(loops, clock.now());
+				// Nothing running: say so instead of opening a dialog with a lone Close row.
+				if (options.length === 0) {
+					ctx.ui.notify(noLoopsMessage(), "info");
+					return;
+				}
+
+				const selected = await choose(ctx, optionTitle(loops.length), options);
+				if (!selected) return;
+
+				switch (selected.action.kind) {
+					case "close":
+						return;
+					case "open": {
+						const loop = engineRef.get(selected.action.id);
+						if (!loop) continue;
+						const next = await runLoopActions(ctx, engineRef, loop);
+						// A removal leaves nothing to manage, so re-read the list; anything else re-reads
+						// the loop so the panel shows its new state.
+						if (next === "close") return;
+						continue;
+					}
+				}
+			}
+		}
+
+		/** Returns "close" when the panel should stop, "back" to re-read the loop list. */
+		async function runLoopActions(
+			ctx: ExtensionContext,
+			engineRef: LoopEngine,
+			loop: LoopRecord,
+		): Promise<"close" | "back"> {
+			const options = actionOptions(loop);
+			const selected = await choose(ctx, loopHeading(loop), options);
+			if (!selected) return "back";
+
+			const action: PanelAction = selected.action;
+			switch (action.kind) {
+				case "remove": {
+					const removed = engineRef.stop(action.id);
+					ctx.ui.notify(removed === 0 ? `没有找到 ${action.id}。` : `已删除 ${removed} 个循环。`, removed === 0 ? "warning" : "info");
+					// Nothing left to manage means nothing left to show: re-reading the list would
+					// replace the removal confirmation with "当前没有运行中的循环".
+					return engineRef.isEmpty() ? "close" : "back";
+				}
+				case "toggle": {
+					if (action.enable) {
+						const resumed = engineRef.resume(action.id);
+						ctx.ui.notify(
+							resumed.length === 0 ? `${action.id} 并不处于暂停状态。` : `已启用 ${resumed.length} 个循环。`,
+							resumed.length === 0 ? "warning" : "info",
+						);
+					} else {
+						const paused = engineRef.pause(action.id, "user");
+						ctx.ui.notify(
+							paused === 0 ? `${action.id} 已经处于暂停状态。` : `已禁用 ${paused} 个循环。`,
+							paused === 0 ? "warning" : "info",
+						);
+					}
+					return "back";
+				}
+				case "close":
+					return "close";
+				default:
+					return "back";
+			}
+		}
+
 		pi.registerCommand("loop", {
 			description: "Run a prompt repeatedly (e.g. /loop 5m check the deploy); skips while the agent is busy",
 			getArgumentCompletions: (prefix) => {
-				const words = ["list", "stop", "pause", "resume", "5m ", "10m ", "30m ", "1h "];
-				const ids = (engine?.list() ?? []).map((loop) => `${loop.id} `);
-				return [...words, ...ids]
+				// Only what the two forms accept: no subcommand vocabulary to memorise.
+				const words = ["5m ", "10m ", "30m ", "1h "];
+				return words
 					.filter((word) => word.startsWith(prefix))
 					.map((value) => ({ value, label: value.trim() }));
 			},
@@ -294,51 +462,20 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 				const command = parseLoopCommand(args, settings.defaultIntervalMs);
 
 				switch (command.kind) {
-					case "usage": {
-						const text = command.error
-							? `${command.error}\n\n${usageText(settings.defaultIntervalMs)}`
-							: usageText(settings.defaultIntervalMs);
-						if (ctx.hasUI) ctx.ui.setEditorText(text);
-						else ctx.ui.notify(text, command.error ? "warning" : "info");
-						return;
-					}
-					case "list": {
-						const loops = engineRef.list();
-						const selected = command.target ? loops.filter((loop) => loop.id === command.target) : loops;
-						if (selected.length === 0) {
-							ctx.ui.notify(command.target ? `No loop with id ${command.target}.` : "No loops are running.", "info");
+					case "panel": {
+						// A bare `/loop` is the management surface. Without a UI there is nothing to show,
+						// so fall back to the usage text rather than doing nothing.
+						if (ctx.hasUI) {
+							await openPanel(ctx, engineRef);
 							return;
 						}
-						const now = clock.now();
-						const lines = selected.map((loop) => formatLoopLine(loop, now));
-						if (ctx.hasUI) ctx.ui.setEditorText(lines.join("\n\n"));
-						else ctx.ui.notify(lines.join("\n"), "info");
+						ctx.ui.notify(usageText(settings.defaultIntervalMs), "info");
 						return;
 					}
-					case "stop": {
-						const removed = engineRef.stop(command.target);
-						ctx.ui.notify(
-							removed === 0 ? `No loop with id ${command.target}.` : `Stopped ${removed} loop(s).`,
-							removed === 0 ? "warning" : "info",
-						);
-						return;
-					}
-					case "pause": {
-						const paused = engineRef.pause(command.target, "user");
-						ctx.ui.notify(
-							paused === 0 ? `No running loop with id ${command.target}.` : `Paused ${paused} loop(s).`,
-							paused === 0 ? "warning" : "info",
-						);
-						return;
-					}
-					case "resume": {
-						const resumed = engineRef.resume(command.target);
-						ctx.ui.notify(
-							resumed.length === 0
-								? `No paused loop with id ${command.target}.`
-								: `Resumed ${resumed.length} loop(s).`,
-							resumed.length === 0 ? "warning" : "info",
-						);
+					case "usage": {
+						const text = `${command.error}\n\n${usageText(settings.defaultIntervalMs)}`;
+						if (ctx.hasUI) ctx.ui.setEditorText(text);
+						else ctx.ui.notify(text, "warning");
 						return;
 					}
 					case "start": {

@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { createAgentSession, DefaultResourceLoader, getAgentDir, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream, getCurrentTools, type AssistantMessage } from "@earendil-works/pi-ai";
 import { isLoopInjection } from "../src/commands.ts";
+import { removeLoop, scriptedUI } from "./helpers/scripted-ui.ts";
 
 describe("triage workflow", () => {
   it("fixes clear tickets and breaks the loop on an ambiguous one", async () => {
@@ -41,9 +42,11 @@ describe("triage workflow", () => {
       models: [{ id: "mm", name: "MM", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 4096 }],
     });
     const model = runtime.getModel("m", "mm")!;
-    const rl = new DefaultResourceLoader({ cwd: process.cwd(), agentDir: getAgentDir(), additionalExtensionPaths: ["./extensions/loop/index.ts"] });
+    const rl = new DefaultResourceLoader({ cwd: process.cwd(), agentDir: getAgentDir(), additionalExtensionPaths: ["./extensions/loop/index.ts"], noExtensions: true });
     await rl.reload();
     const { session } = await createAgentSession({ model, modelRuntime: runtime, resourceLoader: rl, sessionManager: SessionManager.inMemory(), cwd: process.cwd() });
+    const ui = scriptedUI();
+    await session.bindExtensions({ uiContext: ui.ui, mode: "tui" });
 
     await session.prompt("/loop 1s 检查缺陷单 BUG-101 BUG-102，清晰就修复，不清晰就阻断");
     await session.waitForIdle();
@@ -60,7 +63,7 @@ describe("triage workflow", () => {
     expect(requests.every((r) => r.text.includes("BUG-101") || !isLoopInjection(r.text))).toBe(true);
 
         await session.waitForIdle();
-    await session.prompt("/loop stop all");
+    await removeLoop(session, ui, "l1");
     session.dispose();
   }, 90000);
 });

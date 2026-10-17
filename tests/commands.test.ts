@@ -4,9 +4,9 @@ import { formatInjection, parseLoopCommand, usageText } from "../src/commands.ts
 const DEFAULT = 10 * 60_000;
 
 describe("parseLoopCommand", () => {
-	it("returns usage for empty input", () => {
-		expect(parseLoopCommand("", DEFAULT)).toEqual({ kind: "usage" });
-		expect(parseLoopCommand("   ", DEFAULT)).toEqual({ kind: "usage" });
+	it("opens the panel for empty input", () => {
+		expect(parseLoopCommand("", DEFAULT)).toEqual({ kind: "panel" });
+		expect(parseLoopCommand("   ", DEFAULT)).toEqual({ kind: "panel" });
 	});
 
 	it("returns usage when a bare interval has no prompt", () => {
@@ -50,19 +50,13 @@ describe("parseLoopCommand", () => {
 		expect(command.kind === "start" && command.prompt).toBe("do this\nthen that");
 	});
 
-	it("parses list with and without a target", () => {
-		expect(parseLoopCommand("list", DEFAULT)).toEqual({ kind: "list" });
-		expect(parseLoopCommand("list l2", DEFAULT)).toEqual({ kind: "list", target: "l2" });
-		// Not a target: stays a prompt.
-		expect(parseLoopCommand("list all open PRs", DEFAULT).kind).toBe("start");
-	});
-
-	it("parses control commands", () => {
-		expect(parseLoopCommand("stop", DEFAULT)).toEqual({ kind: "stop", target: "all" });
-		expect(parseLoopCommand("stop all", DEFAULT)).toEqual({ kind: "stop", target: "all" });
-		expect(parseLoopCommand("stop l3", DEFAULT)).toEqual({ kind: "stop", target: "l3" });
-		expect(parseLoopCommand("pause l1", DEFAULT)).toEqual({ kind: "pause", target: "l1" });
-		expect(parseLoopCommand("resume", DEFAULT)).toEqual({ kind: "resume", target: "all" });
+	it("has no subcommands: only a start and a bare /loop for the panel", () => {
+		// The command surface is deliberately tiny. Every former subcommand became prompt text, so
+		// `/loop stop the deploy check` still works and `/loop list` is now a prompt, not a verb.
+		expect(parseLoopCommand("list", DEFAULT).kind).toBe("start");
+		expect(parseLoopCommand("stop all", DEFAULT).kind).toBe("start");
+		expect(parseLoopCommand("pause l1", DEFAULT).kind).toBe("start");
+		expect(parseLoopCommand("resume", DEFAULT).kind).toBe("start");
 	});
 
 	it("treats control words followed by prose as a prompt", () => {
@@ -78,8 +72,14 @@ describe("parseLoopCommand", () => {
 });
 
 describe("usageText", () => {
-	it("shows the effective default interval", () => {
-		expect(usageText(DEFAULT)).toContain("defaults to 10m");
+	it("documents only the two ways to use /loop", () => {
+		const text = usageText(DEFAULT);
+		expect(text).toContain("defaults to 10m");
+		// No management subcommands: the panel is reached by a bare `/loop`.
+		expect(text).not.toContain("/loop list");
+		expect(text).not.toContain("/loop stop");
+		expect(text).not.toContain("/loop pause");
+		expect(text).not.toContain("/loop resume");
 	});
 });
 

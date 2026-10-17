@@ -31,12 +31,15 @@ Pick the cheapest layer that can actually fail for the reason you care about:
 
 | Layer | File | Use it for |
 |---|---|---|
-| Pure logic | `tests/duration.test.ts`, `tests/commands.test.ts`, `tests/engine.test.ts` | Scheduling rules, parsing, state transitions. No pi, no I/O, fake clock. |
-| Extension contract | `tests/extension.test.ts` | Command/tool wiring, lifecycle, error paths (stale context, persistence failure) through a fake pi API. |
+| Pure logic | `tests/duration.test.ts`, `tests/commands.test.ts`, `tests/engine.test.ts`, `tests/status.test.ts` | Scheduling rules, parsing, status text, state transitions. No pi, no I/O, fake clock. |
+| Extension contract | `tests/extension.test.ts` | Command/tool wiring, lifecycle, error paths (stale context, persistence failure) through a fake pi API. Dialog answers come from `tests/helpers/scripted-ui.ts`, which drives the real `SelectList` with arrow/enter keys rather than stubbing the choice. |
 | Real runtime | `tests/e2e.test.ts` | Anything that depends on real pi behaviour: idleness, injected-prompt delivery, tool activation, resume-after-pause. |
 | Activation | `tests/activation.test.ts` | Which tools the model is actually offered, asserted against the real runtime. |
 | Workflow | `tests/triage.test.ts` | The end-to-end user story the feature exists for. |
 | Real model | `tests/live.test.ts` | A genuine model iterating a loop. Skips itself with no provider configured. |
+| Panel | `tests/panel.test.ts` | The management panel's rows and the action each one dispatches. Pure data, no pi. |
+| Session scope | `tests/session-scope.test.ts` | A resumed session stays inert; `/reload` restores. Real runtime, because it depends on pi's branch reconstruction. |
+| Isolation | `tests/isolation.test.ts` | Every test helper loads this extension and nothing else. |
 
 If a rule can be tested at the pure-logic layer, it must be. Reaching for the real runtime is a
 last resort, because those tests are slow and their failures are harder to attribute.
@@ -70,7 +73,18 @@ by running against real pi rather than by reading docs:
   this project exists to avoid.
 - **Never throw out of a timer.** Everything reachable from a scheduled callback must absorb a
   stale context, a failed `appendEntry`, or a failed tool-activation call. Failures are logged or
-  ignored, never propagated.
+  ignored, never propagated. `notify` is on that path too: a skip reports, so it can run inside a
+  timer callback and must swallow a stale context like everything else there.
+- **Loops belong to one session.** Only `session_start` with `reason: "reload"` restores from the
+  branch. Startup, new, resume, and fork open a different conversation, and a timer from another
+  conversation must never inject into it.
+- **One panel, two dialogs.** `/loop` has no subcommands: a bare `/loop` opens the panel, and
+  everything else is a prompt. The panel is a `SelectList` in interactive mode (schedule on the left,
+  prompt on the right) and `ctx.ui.select()` everywhere else, because RPC cannot render custom
+  components. Both paths dispatch the same `src/panel.ts` actions.
+- **Tests must not load the developer's extensions.** Every `DefaultResourceLoader` in `tests/`
+  passes `noExtensions: true`. Without it the suite merges the global `settings.json` packages,
+  which plays notification sounds on every `agent_end` and makes timing depend on the machine.
 - **Host-provided packages are peer dependencies.** `@earendil-works/pi-coding-agent` and `typebox`
   belong in `peerDependencies` with `"*"`, never in `dependencies`. A physical copy bypasses pi's
   extension module mapping and creates duplicate runtimes.
