@@ -292,8 +292,9 @@ describe("loop extension", () => {
 		expect(h.selects[0]!.rows[0]).toContain("Task 1");
 		expect(h.selects[0]!.rows[0]).toContain("every 5m");
 		expect(h.selects[0]!.rows.at(-1)).toBe("Close");
-		// The prompt is body text, not a row and not the caption.
-		expect(h.selects[0]!.body.join(String.fromCharCode(10))).toContain("check the deploy");
+		// The list page shows rows only. The prompt belongs to the task's own page, because each task
+		// has a different one and a shared block would show whichever happened to be highlighted.
+		expect(h.selects[0]!.body.join(String.fromCharCode(10))).not.toContain("check the deploy");
 		expect(h.selects[0]!.title).not.toContain("check the deploy");
 		expect(h.editorTexts).toHaveLength(0);
 	});
@@ -495,6 +496,19 @@ describe("loop extension", () => {
 		expect(pauseNotices.at(-1)!.level).toBe("info");
 	});
 
+	it("shows a task's instruction on its own page, not on the list", async () => {
+		const h = await startedHarness();
+		h.queueSelect("Task 1", "Back");
+		await h.invokeCommand("");
+
+		const list = h.selects[0]!;
+		const detail = h.selects[1]!;
+		expect(list.body.join(String.fromCharCode(10)), "the list is rows only").not.toContain("check the deploy");
+		expect(detail.title).toContain("Task 1");
+		expect(detail.body.join(String.fromCharCode(10))).toContain("Instruction");
+		expect(detail.body.join(String.fromCharCode(10))).toContain("check the deploy");
+	});
+
 	it("removes the loop when the model reports it is done", async () => {
 		// Two shapes of ending: waiting for the user (resumable) and finished (final). Without the
 		// second, "I fixed it, nothing left to do" had to borrow the pause, and the user's next
@@ -670,6 +684,46 @@ describe("loop extension", () => {
 		expect(h.statuses.length).toBeGreaterThan(before);
 		// The countdown advances rather than repeating the first value.
 		expect(new Set(h.statuses.filter(Boolean)).size).toBeGreaterThan(1);
+	});
+
+	it("repaints the footer only when the displayed value changes", async () => {
+		// The footer is background information. A tick that redraws an unchanged number is flicker
+		// competing with whatever the user is reading, so the timer targets the next grid mark
+		// (:00/:15/:30/:45) rather than running on a blind cadence.
+		const h = await startedHarness();
+		const before = h.statuses.length;
+
+		// One second in, the shown value has not changed, so nothing was repainted.
+		h.clock.advance(1_000);
+		expect(h.statuses.length, "no repaint for an unchanged number").toBe(before);
+
+		// The next mark is 14s away (5m - 1s), and crossing it does repaint.
+		h.clock.advance(13_000);
+		expect(h.statuses.length).toBe(before);
+		h.clock.advance(1_000);
+		expect(h.statuses.length, "the countdown crossed a mark").toBeGreaterThan(before);
+		expect(h.statuses.filter(Boolean).at(-1)).toContain("next 4m45s");
+	});
+
+	it("never shows a value that skips a mark", async () => {
+		// Walking the countdown one mark at a time must produce every step, not a jump from 5m to 4m.
+		const h = await startedHarness();
+		const seen: string[] = [];
+		for (let step = 0; step < 8; step++) {
+			const status = h.statuses.filter(Boolean).at(-1);
+			if (status) seen.push(/next [^·]+/.exec(status)?.[0].trim() ?? "");
+			h.clock.advance(15_000);
+		}
+		expect(seen.filter(Boolean)).toEqual([
+			"next 5m",
+			"next 4m45s",
+			"next 4m30s",
+			"next 4m15s",
+			"next 4m",
+			"next 3m45s",
+			"next 3m30s",
+			"next 3m15s",
+		]);
 	});
 
 	it("registers no turn_end handler, so it never depends on that boundary", async () => {

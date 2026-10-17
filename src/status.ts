@@ -1,6 +1,6 @@
 /** Compact footer status for running loops. */
 
-import { formatDuration, formatNextDue } from "./duration.ts";
+import { footerCountdown, formatDuration } from "./duration.ts";
 import { loopLabel, type LoopRecord } from "./engine.ts";
 
 export interface StatusOptions {
@@ -33,7 +33,8 @@ export function composeStatus(
 	// `formatDuration`, not `formatCountdown`: the panel words intervals the same way, so a 1-day
 	// loop reads `every 1d` on both surfaces instead of `1d` in one and `24h` in the other.
 	const parts = [`⟳ LOOP ${loopLabel(next.id)}`, `every ${formatDuration(next.intervalMs)}`];
-	if (options.countdown !== false) parts.push(formatNextDue(next.nextAt - now));
+	// Snapped to the footer grid, so the value changes on :00/:15/:30/:45 rather than every second.
+	if (options.countdown !== false) parts.push(footerCountdown(next.nextAt - now));
 	if (next.runs > 0) parts.push(`runs ${next.runs}`);
 	if (next.skips > 0) parts.push(`skips ${next.skips}`);
 	// Only the other *running* loops. Counting paused ones here too reported the same loop twice and

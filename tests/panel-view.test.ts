@@ -152,9 +152,9 @@ describe("panel view detail block", () => {
 		expect(lines.some((line) => line.includes("…"))).toBe(true);
 	});
 
-	it("keeps one block height for the whole dialog, so the list does not jump", () => {
-		// One item with a long detail and one with a short one. The block is sized to the tall one
-		// for both, so arrowing does not move the rows.
+	it("keeps one block height across a dialog whose detail changes", () => {
+		// For the action dialog the detail is fixed; for a list it is not rendered at all. Either way,
+		// a changing detail must not resize the box mid-interaction.
 		const h = makeView({
 			intro: (value) => (value === "l1" ? "a long detail that wraps over several lines in this box" : "short"),
 		});

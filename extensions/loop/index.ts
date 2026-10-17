@@ -19,7 +19,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { keyHint, rawKeyHint } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { formatDuration } from "../../src/duration.ts";
+import { formatDuration, msUntilFooterChange } from "../../src/duration.ts";
 import { formatInjection, isLoopInjection, parseLoopCommand, usageText } from "../../src/commands.ts";
 import { type Clock, systemClock } from "../../src/clock.ts";
 import {
@@ -58,7 +58,15 @@ export interface LoopSettings {
 	maxLoops: number;
 	/** Notify on every skipped iteration instead of once per streak. */
 	notifyEverySkip: boolean;
-	/** Footer countdown refresh cadence in ms. 0 keeps the status but drops the countdown. */
+	/**
+	 * Footer countdown refresh cadence in ms. 0 keeps the status but drops the countdown.
+	 *
+	 * Deliberately coarse. The footer is redrawn on every terminal update, so repainting it every
+	 * second to move a countdown competes with whatever the user is reading — the number is not
+	 * worth a flicker. Fifteen seconds keeps a minute-scale countdown legible while costing a
+	 * handful of repaints per interval. The panel is a separate surface and ticks at 1s, because
+	 * there the countdown is the thing the user opened it to look at.
+	 */
 	statusRefreshMs: number;
 }
 
@@ -68,6 +76,7 @@ export const DEFAULT_SETTINGS: LoopSettings = {
 	expireAfterMs: DEFAULT_EXPIRE_MS,
 	maxLoops: DEFAULT_MAX_LOOPS,
 	notifyEverySkip: false,
+	// See `LoopSettings.statusRefreshMs`: coarse on purpose, so the footer does not flicker.
 	statusRefreshMs: 15_000,
 };
 
@@ -176,13 +185,25 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			}
 		}
 
+		/**
+		 * Repaint the footer when — and only when — the number it shows is about to change.
+		 *
+		 * Not a fixed cadence: a tick that redraws an unchanged value is pure flicker. The delay is
+		 * however long is left until the displayed countdown crosses the next grid mark, capped by
+		 * the configured cadence so a very long wait still gets refreshed occasionally.
+		 */
 		function armStatusTimer(): void {
 			disarmStatusTimer();
 			if (!engine || engine.isEmpty() || settings.statusRefreshMs <= 0 || ctxRef?.mode !== "tui") return;
+			const nextAt = engine.nextFireAt;
+			const untilChange =
+				nextAt === undefined
+					? settings.statusRefreshMs
+					: Math.min(msUntilFooterChange(nextAt - clock.now()), settings.statusRefreshMs);
 			statusTimer = clock.setTimer(() => {
 				statusTimer = undefined;
 				syncStatusTimer();
-			}, settings.statusRefreshMs);
+			}, Math.max(1, untilChange));
 		}
 
 		/**
@@ -435,11 +456,9 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 				const selected = await choose(ctx, {
 					title: () => optionTitle(engineRef.list().length),
 					load: () => loopOptions(engineRef.list(), clock.now()),
-					// The highlighted loop's prompt in full, below the rows.
-					intro: (value) => {
-						const loop = value === undefined ? undefined : engineRef.get(value);
-						return loop ? loopDetail(loop) : undefined;
-					},
+					// No detail block: the list is a list. Each loop's instruction and reason belong on
+					// its own page, since no two are the same and a shared block would show whichever
+					// row the cursor happens to be on.
 				});
 				if (!selected) return;
 

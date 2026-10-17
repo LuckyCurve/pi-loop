@@ -92,6 +92,10 @@ by running against real pi rather than by reading docs:
 - **The model's words and the user's instruction are labelled, never merged.** The panel's detail
   block prints `Stopped:` (the model's `breakReason`) and `Instruction` (the original prompt) as two
   labelled blocks. Concatenated, a model's reply reads like the user's own request.
+- **A list is a list.** `loopOptions` rows carry schedule, state, and counters only. The instruction
+  and the model's reason are per-loop prose and live on that loop's own page (`loopDetail`), ordered
+  instruction-first because the reply is the response to it, each under its own label. A shared
+  detail block on the list showed whichever loop the cursor happened to be on.
 - **The caption is a status line, never the prompt.** `loopHeading` is short by construction; the
   prompt reaches the panel through `loopDetail`, wrapped into the detail block below the rows. A
   prompt drawn into the border has no length limit and eats the whole line, leaving the box with no
@@ -112,6 +116,10 @@ by running against real pi rather than by reading docs:
 - **The extension owns the panel it opened.** pi calls `dispose()` when a dialog closes normally, but
   its teardown path only *hides* the overlay, so a panel open across a session switch would leave a
   repaint timer running for the life of the process. `disposeEngine()` disposes it too.
+- **The footer changes on the mark, not on a cadence.** `footerCountdown` snaps to the 15s grid and
+  `msUntilFooterChange` arms the timer for exactly that long, so the status line never redraws an
+  unchanged number. The panel is the opposite surface: it ticks every second, because the countdown
+  is what the user opened it to watch.
 - **Never display a value nothing repaints.** Both the footer and the panel show countdowns; when the
   refresh that would tick one is switched off (`statusRefreshMs: 0`), the countdown has to go with
   it. A frozen number keeps claiming a time that has already passed.

@@ -55,9 +55,7 @@ describe("loopHeading", () => {
 describe("loopDetail", () => {
 	const nl = String.fromCharCode(10);
 
-	it("labels the instruction, so it is never confused with the model's words", () => {
-		// The previous version printed the prompt and the break reason as one plain block; the reason
-		// is written by the model, so the two read as one voice.
+	it("leads with the instruction, because that is what the user asked for", () => {
 		expect(loopDetail(loop())).toBe(`Instruction${nl}check the deploy`);
 	});
 
@@ -66,15 +64,17 @@ describe("loopDetail", () => {
 		expect(loopDetail(loop({ prompt }))).toBe(`Instruction${nl}${prompt}`);
 	});
 
-	it("puts the model's reason in its own labelled block, before the instruction", () => {
+	it("puts the model's reason below the instruction, in its own labelled block", () => {
+		// Instruction first, then what the agent said about it: the request is the context for the
+		// reply, not the other way round.
 		expect(loopDetail(loop({ paused: "agent", breakReason: "which env?" }))).toBe(
-			[`Stopped: waiting for your answer`, "which env?", "", "Instruction", "check the deploy"].join(nl),
+			[`Instruction`, "check the deploy", "", `Stopped: waiting for your answer`, "which env?"].join(nl),
 		);
 		expect(loopDetail(loop({ paused: "user" }))).toBe(
-			[`Stopped: disabled by you`, "", "Instruction", "check the deploy"].join(nl),
+			["Instruction", "check the deploy", "", `Stopped: disabled by you`].join(nl),
 		);
 		expect(loopDetail(loop({ paused: "agent" }))).toBe(
-			[`Stopped: waiting for your answer`, "", "Instruction", "check the deploy"].join(nl),
+			["Instruction", "check the deploy", "", `Stopped: waiting for your answer`].join(nl),
 		);
 	});
 });
@@ -90,27 +90,27 @@ describe("pauseWording", () => {
 });
 
 describe("loopOptions", () => {
-	it("puts the schedule on the primary column and the counts plus prompt on the detail column", () => {
+	it("keeps the row to schedule and counters", () => {
+		// A list row is a row. The prompt lives on the loop's own page — every loop has a different
+		// one, so a shared block on the list would show whatever the cursor happened to be over.
 		const [row] = loopOptions([loop()], NOW);
 		expect(row!.label).toBe("Task 1 · every 5m · next 2m30s");
-		expect(row!.description).toBe("runs 4 · skips 1 · check the deploy");
+		expect(row!.description).toBe("runs 4 · skips 1");
 		expect(row!.action).toEqual({ kind: "open", id: "l1" });
 	});
 
-	it("drops the run and skip counts for a paused loop and leads with why it stopped", () => {
+	it("names the state for a paused loop instead of a countdown", () => {
 		const [waiting] = loopOptions([loop({ paused: "agent", breakReason: "which env?" })], NOW);
 		expect(waiting!.label).toBe("Task 1 · every 5m · paused");
-		expect(waiting!.label).not.toContain("runs");
-		expect(waiting!.description).toBe("waiting for your answer · which env? · check the deploy");
+		expect(waiting!.description, "no prose on the list row").toBe("runs 4 · skips 1");
 
 		const [disabled] = loopOptions([loop({ paused: "user" })], NOW);
 		expect(disabled!.label).toBe("Task 1 · every 5m · disabled");
-		expect(disabled!.description).toBe("disabled by you · check the deploy");
 	});
 
-	it("omits the counts while a loop has not run yet", () => {
+	it("leaves the detail column empty while a loop has not run yet", () => {
 		const [row] = loopOptions([loop({ runs: 0, skips: 0 })], NOW);
-		expect(row!.description).toBe("check the deploy");
+		expect(row!.description).toBe("");
 	});
 
 	it("ends with the row that closes the panel", () => {
@@ -130,15 +130,12 @@ describe("loopOptions", () => {
 		expect(new Set(options.map((option) => option.value)).size).toBe(options.length);
 	});
 
-	it("truncates a long prompt instead of letting it run off the row", () => {
-		const [row] = loopOptions([loop({ prompt: "x".repeat(200) })], NOW);
-		expect(row!.description.length).toBeLessThan(100);
-		expect(row!.description).toContain("…");
-	});
-
-	it("collapses a multi-line prompt to its first line", () => {
-		const [row] = loopOptions([loop({ prompt: "first line\nsecond line" })], NOW);
-		expect(row!.description).toBe("runs 4 · skips 1 · first line");
+	it("is unaffected by prompt length or shape, because it does not render one", () => {
+		const [long] = loopOptions([loop({ prompt: "x".repeat(200) })], NOW);
+		const [multi] = loopOptions([loop({ prompt: `first line${String.fromCharCode(10)}second line` })], NOW);
+		expect(long!.description).toBe("runs 4 · skips 1");
+		expect(multi!.description).toBe("runs 4 · skips 1");
+		expect(long!.label).toBe(multi!.label);
 	});
 
 	it("says what to do when nothing is running", () => {

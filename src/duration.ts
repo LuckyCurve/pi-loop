@@ -103,6 +103,36 @@ export function formatNextDue(ms: number): string {
 	return text === "now" ? "due now" : `next ${text}`;
 }
 
+/**
+ * The footer's grid: :00, :15, :30, :45 seconds. The status line is background information, so it
+ * changes only on these marks — a number that moves every second competes with whatever the user is
+ * reading. Derived from the 15s figure by construction, so "every 15 seconds" and "on the quarter"
+ * cannot become two different rules.
+ */
+export const FOOTER_QUANTUM_MS = 15_000;
+
+/** Time left, snapped up to the footer grid: 9m50s reads `next 10m` until 9m45s is left. */
+export function footerCountdown(ms: number): string {
+	if (ms <= 0) return "due now";
+	// Round up rather than down: the footer should never claim less time than is actually left.
+	const snapped = Math.ceil(ms / FOOTER_QUANTUM_MS) * FOOTER_QUANTUM_MS;
+	return formatNextDue(snapped);
+}
+
+/**
+ * How long until `footerCountdown` would display something different.
+ *
+ * This is the whole point: the footer is not repainted on a fixed cadence, it is repainted when the
+ * value it shows is about to change. A loop with 10 minutes left triggers one repaint in 15s, at
+ * which point it reads 9m45s — no tick that redraws an unchanged number.
+ */
+export function msUntilFooterChange(ms: number, quantumMs = FOOTER_QUANTUM_MS): number {
+	if (ms <= 0) return quantumMs;
+	const remainder = ms % quantumMs;
+	// Exactly on a mark means the next change is a full quantum away, not zero.
+	return remainder === 0 ? quantumMs : remainder;
+}
+
 export interface ParseLoopArgsResult {	/** Interval when the user supplied one (`5m`, `every 20m`). */
 	interval?: Duration;
 	/** Remaining prompt text. */

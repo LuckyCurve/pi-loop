@@ -104,13 +104,13 @@ export function loopHeading(loop: LoopRecord, now: number): string {
  * the panel, which is the only place a long prompt can be read.
  */
 export function loopDetail(loop: LoopRecord): string {
-	const blocks: string[] = [];
+	// Instruction first: it is what the user asked for, and the agent's reply is the response to it.
+	const blocks: string[] = [["Instruction", loop.prompt.trim()].filter(Boolean).join("\n")];
 	if (loop.paused) {
 		const stopped = [`Stopped: ${pauseLabel(loop)}`];
 		if (loop.breakReason) stopped.push(loop.breakReason);
 		blocks.push(stopped.join("\n"));
 	}
-	blocks.push(["Instruction", loop.prompt.trim()].filter(Boolean).join("\n"));
 	return blocks.join("\n\n");
 }
 
@@ -120,14 +120,12 @@ export function loopOptions(loops: readonly LoopRecord[], now: number): PanelOpt
 	// dialog with a lone Close row.
 	if (loops.length === 0) return [];
 	const rows: PanelOption[] = loops.map((loop) => {
-		const prompt = preview(loop.prompt);
-		const detail = loop.paused
-			? [pauseLabel(loop), loop.breakReason, prompt].filter(Boolean)
-			: [...counters(loop), prompt].filter(Boolean);
+		// Counters only. The prompt and the model's reason are per-loop prose, and they belong on that
+		// loop's page: a shared block on the list would show whichever row the cursor happens to be on.
 		return {
 			value: loop.id,
 			label: `${schedule(loop)}${loop.paused ? stateLabel(loop) : formatNextDue(loop.nextAt - now)}`,
-			description: detail.join(" · "),
+			description: counters(loop).join(" · "),
 			action: { kind: "open", id: loop.id },
 		};
 	});

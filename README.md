@@ -49,8 +49,10 @@ Two forms, nothing else:
 | `/loop` | Open the management panel: see, disable, or remove loops |
 
 There are no management subcommands — no `list`, `stop`, `pause`, or `resume` to remember. A bare
-`/loop` opens a panel in the middle of the screen: a row per loop with its schedule, state, and
-counters, and the highlighted loop's prompt in full underneath, wrapped. Selecting a row offers:
+`/loop` opens a panel in the middle of the screen with one row per loop — schedule, state, and
+counters. Selecting a row opens that loop's own page, which shows its instruction in full followed by
+the model's reason for stopping, as two labelled blocks. The list itself carries no prose: every loop
+has a different instruction, so a shared block would only show whichever row the cursor was on.
 
 | Action | What it does |
 |---|---|
@@ -66,7 +68,9 @@ loop, it does not stop one.
 
 The panel is a centered overlay with its own frame, not a selector sitting in the editor at the
 bottom of the screen, and its countdown ticks while it is open instead of freezing at whatever it
-read when you opened it.
+read when you opened it. The panel ticks once a second because the countdown is the thing you opened
+it to watch; the footer changes only on the :15/:30/:45/:00 marks, because a number that moves every
+second competes with whatever you are reading.
 
 All user-facing text is English — commands, notifications, the panel, the status line. Chinese lives
 only in [README.zh-CN.md](README.zh-CN.md), which `tests/language.test.ts` enforces.
@@ -113,6 +117,11 @@ asked for nor cheap. A skip is reported once per streak, the loop retries one in
 `runs` and `skips` are tracked separately so the panel and the footer show what actually happened.
 
 ## The footer
+
+The footer is deliberately slow: it repaints every 15 seconds, not every second. It is redrawn on
+every terminal update, so a second-by-second countdown would flicker under whatever you are reading,
+and a minute-scale countdown does not need second precision to be useful. The panel is the opposite —
+it ticks once a second, because there the countdown is what you opened it to look at.
 
 While a loop is running, the status line shows the closest upcoming fire:
 
@@ -171,7 +180,7 @@ This project is developed test-first. See [AGENTS.md](AGENTS.md) for the working
 
 ```bash
 npm install
-npm test          # 170 tests
+npm test          # 179 tests
 npm run typecheck
 ```
 
