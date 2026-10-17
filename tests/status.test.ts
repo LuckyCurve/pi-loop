@@ -51,6 +51,12 @@ describe("composeStatus", () => {
 		expect(status).toContain("1 paused");
 	});
 
+	it("says the run is due rather than `next now` when it has arrived", () => {
+		const status = composeStatus([loop({ nextAt: NOW - 400 })], NOW);
+		expect(status).toContain("due now");
+		expect(status).not.toContain("next now");
+	});
+
 	it("words the interval the same way the panel does", () => {
 		// The footer said `every 24h` where the panel said `every 1d` for the same loop.
 		expect(composeStatus([loop({ intervalMs: 86_400_000 })], NOW)).toContain("every 1d");

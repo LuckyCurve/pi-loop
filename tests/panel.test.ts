@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { LoopRecord } from "../src/engine.ts";
 import {
 	actionOptions,
-	countdownLabel,
 	loopDetail,
 	loopHeading,
 	loopOptions,
@@ -30,17 +29,6 @@ describe("optionTitle", () => {
 	it("counts the loops", () => {
 		expect(optionTitle(1)).toBe("Loops (1)");
 		expect(optionTitle(3)).toBe("Loops (3)");
-	});
-});
-
-describe("countdownLabel", () => {
-	it("reads as a time until the next run", () => {
-		expect(countdownLabel(150_000)).toBe("next 2m30s");
-		expect(countdownLabel(20_000)).toBe("next 20s");
-	});
-	it("says so when the run is due now", () => {
-		expect(countdownLabel(0)).toBe("due now");
-		expect(countdownLabel(400)).toBe("due now");
 	});
 });
 

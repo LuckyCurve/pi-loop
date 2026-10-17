@@ -7,7 +7,7 @@
  * extension only maps a selected value back to an action and calls the engine.
  */
 
-import { formatCountdown, formatDuration } from "./duration.ts";
+import { formatDuration, formatNextDue } from "./duration.ts";
 import type { LoopRecord } from "./engine.ts";
 
 export type PanelAction =
@@ -47,12 +47,6 @@ export function noLoopsMessage(): string {
 	return "No loops are running.";
 }
 
-/** `next 2m30s`, or `due now` when the run is overdue. */
-export function countdownLabel(ms: number): string {
-	const text = formatCountdown(Math.max(0, ms));
-	return text === "now" ? "due now" : `next ${text}`;
-}
-
 /** First line of the prompt, cut to fit one row. */
 function preview(prompt: string, maxChars = PREVIEW_CHARS): string {
 	const line = prompt.split("\n")[0]!.trim();
@@ -90,7 +84,7 @@ function counters(loop: LoopRecord): string[] {
  */
 export function loopHeading(loop: LoopRecord, now: number): string {
 	const base = `${loop.id} · every ${formatDuration(loop.intervalMs)}`;
-	return loop.paused ? `${base} · ${stateLabel(loop)}` : `${base} · ${countdownLabel(loop.nextAt - now)}`;
+	return loop.paused ? `${base} · ${stateLabel(loop)}` : `${base} · ${formatNextDue(loop.nextAt - now)}`;
 }
 
 /**
@@ -114,7 +108,7 @@ export function loopOptions(loops: readonly LoopRecord[], now: number): PanelOpt
 			: [...counters(loop), prompt].filter(Boolean);
 		return {
 			value: loop.id,
-			label: `${schedule(loop)}${loop.paused ? stateLabel(loop) : countdownLabel(loop.nextAt - now)}`,
+			label: `${schedule(loop)}${loop.paused ? stateLabel(loop) : formatNextDue(loop.nextAt - now)}`,
 			description: detail.join(" · "),
 			action: { kind: "open", id: loop.id },
 		};

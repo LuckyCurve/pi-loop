@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDuration, MAX_INTERVAL_MS, MIN_INTERVAL_MS, parseLoopArgs } from "../src/duration.ts";
+import { formatDuration, formatNextDue, MAX_INTERVAL_MS, MIN_INTERVAL_MS, parseLoopArgs } from "../src/duration.ts";
 
 describe("parseLoopArgs", () => {
 	it("parses a leading interval", () => {
@@ -74,6 +74,21 @@ describe("parseLoopArgs", () => {
 		const result = parseLoopArgs("5x check");
 		expect(result.interval).toBeUndefined();
 		expect(result.prompt).toBe("5x check");
+	});
+});
+
+describe("formatNextDue", () => {
+	it("reads as a time until the next run", () => {
+		expect(formatNextDue(150_000)).toBe("next 2m30s");
+		expect(formatNextDue(20_000)).toBe("next 20s");
+	});
+
+	it("says the moment has arrived instead of `next now`", () => {
+		// Both the footer and the panel show this; `next now` is what falling through to the raw
+		// countdown wording produced.
+		expect(formatNextDue(0)).toBe("due now");
+		expect(formatNextDue(400)).toBe("due now");
+		expect(formatNextDue(-5_000)).toBe("due now");
 	});
 });
 

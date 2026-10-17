@@ -94,6 +94,15 @@ export function formatCountdown(ms: number): string {
 	return rest === 0 ? `${hours}h` : `${hours}h${rest}m`;
 }
 
+/**
+ * `next 2m30s`, or `due now` once the moment has passed. Both the footer and the panel show this,
+ * and sharing it here is what keeps them from wording the same instant two different ways.
+ */
+export function formatNextDue(ms: number): string {
+	const text = formatCountdown(Math.max(0, ms));
+	return text === "now" ? "due now" : `next ${text}`;
+}
+
 export interface ParseLoopArgsResult {	/** Interval when the user supplied one (`5m`, `every 20m`). */
 	interval?: Duration;
 	/** Remaining prompt text. */
