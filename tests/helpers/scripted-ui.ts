@@ -20,6 +20,11 @@ export interface ScriptedUI {
 	ui: ExtensionUIContext;
 	/** Every dialog shown, in order, with the rows it rendered. */
 	dialogs: { title: string; options: string[] }[];
+	/**
+	 * How each `custom()` dialog was presented. The panel is a centered overlay, not a selector in
+	 * the editor slot, and that is easy to lose silently — nothing about the rows would change.
+	 */
+	presentation: { overlay: boolean; anchor: string | undefined }[];
 	/** Notifications the extension produced, newest last. */
 	notifications: { message: string; level: string }[];
 	/** `setStatus` calls, in order (undefined = cleared). */
@@ -28,7 +33,7 @@ export interface ScriptedUI {
 	editorTexts: string[];
 	/**
 	 * Append answers: each dialog consumes one. A string names a row — exact label first, then a
-	 * prefix (`"l1"`, `"禁用"`) — `undefined` closes the dialog like Esc.
+	 * prefix (`"l1"`, `"Disable"`) — `undefined` closes the dialog like Esc.
 	 */
 	script(...answers: (string | undefined)[]): void;
 	/** Dialog titles shown so far. */
@@ -55,6 +60,7 @@ const TEST_TUI = { requestRender: () => undefined } as never;
 export function scriptedUI(options: ScriptedUIOptions = {}): ScriptedUI {
 	const answers: (string | undefined)[] = [];
 	const dialogs: { title: string; options: string[] }[] = [];
+	const presentation: { overlay: boolean; anchor: string | undefined }[] = [];
 	const notifications: { message: string; level: string }[] = [];
 	const statuses: (string | undefined)[] = [];
 	const editorTexts: string[] = [];
@@ -79,12 +85,21 @@ export function scriptedUI(options: ScriptedUIOptions = {}): ScriptedUI {
 		select: async (title: string, rows: string[]) => {
 			options.onDialog?.();
 			dialogs.push({ title, options: [...rows] });
+			// The `select` fallback is the non-TUI path; it has no overlay to configure.
+			presentation.push({ overlay: false, anchor: undefined });
 			const answer = answers.shift();
 			if (answer === undefined) return undefined;
 			return pick(rows, answer);
 		},
-		custom: async (factory: (tui: never, theme: never, keybindings: never, done: (value: unknown) => void) => unknown) => {
+		custom: async (
+			factory: (tui: never, theme: never, keybindings: never, done: (value: unknown) => void) => unknown,
+			dialogOptions?: { overlay?: boolean; overlayOptions?: { anchor?: string } },
+		) => {
 			options.onDialog?.();
+			presentation.push({
+				overlay: dialogOptions?.overlay === true,
+				anchor: dialogOptions?.overlayOptions?.anchor,
+			});
 			const answer = answers.shift();
 			if (answer === undefined) return undefined;
 
@@ -117,6 +132,7 @@ export function scriptedUI(options: ScriptedUIOptions = {}): ScriptedUI {
 	return {
 		ui,
 		dialogs,
+		presentation,
 		notifications,
 		statuses,
 		editorTexts,
@@ -129,17 +145,17 @@ export function scriptedUI(options: ScriptedUIOptions = {}): ScriptedUI {
 }
 
 /**
- * Remove one loop the way a user would: `/loop`, pick the loop, 删除.
+ * Remove one loop the way a user would: `/loop`, pick the loop, Remove.
  * Tests that only need a loop gone should use this rather than reaching into the engine, so the
  * panel stays exercised by everything that depends on it.
  */
 export async function removeLoop(session: { prompt(text: string): Promise<unknown> }, ui: ScriptedUI, id: string): Promise<void> {
-	ui.script(id, "删除");
+	ui.script(id, "Remove");
 	await session.prompt("/loop");
 }
 
 /** Disable one loop through the panel. */
 export async function disableLoop(session: { prompt(text: string): Promise<unknown> }, ui: ScriptedUI, id: string): Promise<void> {
-	ui.script(id, "禁用");
+	ui.script(id, "Disable");
 	await session.prompt("/loop");
 }

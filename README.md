@@ -48,11 +48,13 @@ Two forms, nothing else:
 | `/loop` | Open the management panel: see, disable, or remove loops |
 
 There are no management subcommands — no `list`, `stop`, `pause`, or `resume` to remember. A bare
-`/loop` opens one panel with a row per loop: schedule and state on the left, counters and the prompt
-on the right. Selecting a row offers **禁用** (disable — a pause, resumable), **删除** (remove), and
-**返回**; the panel itself closes with **关闭** or Esc. Nothing running means no popup at all, just
-"当前没有运行中的循环。" Everything else is a plain prompt: `/loop stop the deploy check` starts a
-loop, it does not stop one.
+`/loop` opens a panel in the middle of the screen with a row per loop: schedule and state on the
+left, counters and the prompt on the right. Selecting a row offers **Disable** (a pause, resumable),
+**Remove**, and **Back**; the panel itself closes with **Close** or Esc. Nothing running means no
+popup at all, just a short "No loops are running." Everything else is a plain prompt:
+`/loop stop the deploy check` starts a loop, it does not stop one.
+
+The panel is a centered overlay, not a selector sitting in the editor at the bottom of the screen.
 
 The panel only ever shows the loops of the **current session**. Close it, switch sessions, or fork,
 and there is nothing to see — those loops are gone, not hidden.
@@ -147,7 +149,7 @@ This project is developed test-first. See [AGENTS.md](AGENTS.md) for the working
 
 ```bash
 npm install
-npm test          # 110 tests
+npm test          # 114 tests
 npm run typecheck
 ```
 

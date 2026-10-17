@@ -41,7 +41,9 @@ pi -e ./extensions/loop/index.ts            # 临时试用，无需安装
 | `/loop <prompt>` | 不写间隔：使用 `defaultIntervalMs`（默认 10 分钟） |
 | `/loop` | 打开管理面板：查看、禁用、删除循环 |
 
-没有管理子命令 —— 不需要记 `list`、`stop`、`pause`、`resume`。单独输入 `/loop` 只弹出一个面板：每个循环一行，左侧是间隔与状态，右侧是次数与 prompt。选中某行后可选 **禁用**（暂停，可恢复）、**删除**、**返回**；面板本身用 **关闭** 或 Esc 退出。没有循环时不弹窗，只提示「当前没有运行中的循环。」其余一切都会被当成 prompt：`/loop stop the deploy check` 是启动一个循环，不是停止循环。
+没有管理子命令 —— 不需要记 `list`、`stop`、`pause`、`resume`。单独输入 `/loop` 会在**屏幕中间**弹出面板：每个循环一行，左侧是间隔与状态，右侧是次数与 prompt。选中某行后可选 **Disable**（暂停，可恢复）、**Remove**、**Back**；面板本身用 **Close** 或 Esc 退出。没有循环时不弹窗，只提示 `No loops are running.`。其余一切都会被当成 prompt：`/loop stop the deploy check` 是启动一个循环，不是停止循环。
+
+界面文案一律英文（见下方「界面语言」）。
 
 面板只显示**当前会话**的循环。关闭会话、切换会话或 fork 之后，它就什么都没有了 —— 那些循环是没了，不是被藏起来了。
 
@@ -122,7 +124,7 @@ pi -e ./extensions/loop/index.ts            # 临时试用，无需安装
 
 ```bash
 npm install
-npm test          # 110 个测试
+npm test          # 114 个测试
 npm run typecheck
 ```
 
@@ -137,6 +139,10 @@ npm run typecheck
 - `tests/panel.test.ts` —— 面板的行，以及每行派发的动作
 - `tests/session-scope.test.ts` —— 真实运行时的会话作用域：恢复会话保持静止，`/reload` 才恢复
 - `tests/isolation.test.ts` —— 所有测试共用的 loader 配置，保证 `npm test` 不会加载开发者本机安装的扩展
+
+## 界面语言
+
+pi 里的一切用户可见文案都是英文：命令描述、面板、通知、状态栏。中文只出现在本文档里。这样可以避免同一条消息里出现两种语言（Agent 给出的 `reason` 是中文时尤其明显），也不需要维护一套翻译。
 
 ## 与 Claude Code `/loop` 的差异
 

@@ -216,14 +216,16 @@ describe("pi-loop against the real pi runtime", () => {
 
 			await session.prompt("/loop 1s WORK");
 			await session.waitForIdle();
-			ui.script("l1", "禁用", "关闭");
+			ui.script("l1", "Disable", "Close");
 			await session.prompt("/loop");
 			await session.waitForIdle();
 
-			expect(ui.dialogs[0]!.title).toBe("循环 (1)");
-			expect(ui.dialogs[0]!.options[0]).toContain("每 1s");
-			expect(ui.dialogs[0]!.options.at(-1)).toBe("关闭");
-			expect(ui.dialogs[1]!.options).toEqual(["禁用", "删除", "返回"]);
+			expect(ui.dialogs[0]!.title).toBe("Loops (1)");
+			expect(ui.dialogs[0]!.options[0]).toContain("every 1s");
+			expect(ui.dialogs[0]!.options.at(-1)).toBe("Close");
+			expect(ui.dialogs[1]!.options).toEqual(["Disable", "Remove", "Back"]);
+			// Presented as a centered overlay, so the panel owns the middle of the screen.
+			expect(ui.presentation.every((dialog) => dialog.overlay && dialog.anchor === "center")).toBe(true);
 			// Disabled: the loop is paused, so it is not due any more.
 			await delay(2_500);
 			expect(state.requests.filter((request) => /· run 2 ·/.test(request.text))).toHaveLength(0);

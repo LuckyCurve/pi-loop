@@ -82,6 +82,13 @@ by running against real pi rather than by reading docs:
   everything else is a prompt. The panel is a `SelectList` in interactive mode (schedule on the left,
   prompt on the right) and `ctx.ui.select()` everywhere else, because RPC cannot render custom
   components. Both paths dispatch the same `src/panel.ts` actions.
+- **The panel is a centered overlay.** It opens with `ctx.ui.custom(factory, { overlay: true,
+  overlayOptions: { anchor: "center" } })`. Without `overlay`, `custom()` renders in the editor slot
+  at the bottom, which reads like an afterthought — and no row would change, so nothing else would
+  notice. `tests/helpers/scripted-ui.ts` records the option so this is asserted.
+- **User-facing text is English.** Commands, the panel, notifications, and the status line are all
+  English; Chinese lives only in `README.zh-CN.md`. A mixed message (an English prefix in front of a
+  Chinese `reason`) is what this avoids; do not reintroduce per-string translations.
 - **Tests must not load the developer's extensions.** Every `DefaultResourceLoader` in `tests/`
   passes `noExtensions: true`. Without it the suite merges the global `settings.json` packages,
   which plays notification sounds on every `agent_end` and makes timing depend on the machine.

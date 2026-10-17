@@ -175,11 +175,18 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 
 		/** Refresh the countdown now and keep it fresh only while a loop is running. */
 		function syncStatusTimer(): void {
-			if (!engine || engine.isEmpty() || settings.statusRefreshMs <= 0) {
+			if (!engine || settings.statusRefreshMs <= 0) {
 				disarmStatusTimer();
 				return;
 			}
+			// Refresh even when nothing is left: an empty set composes to undefined, which is what
+			// clears the footer. Returning early here left the last loop's countdown on screen after
+			// the loop was removed or expired.
 			refreshStatus();
+			if (engine.isEmpty()) {
+				disarmStatusTimer();
+				return;
+			}
 			armStatusTimer();
 		}
 
@@ -367,6 +374,12 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 						tui.requestRender();
 					},
 				};
+			}, {
+				// A management surface belongs in the middle of the screen. Without this, `custom()`
+				// renders in the editor slot at the bottom, which reads like an afterthought.
+				// 80 columns is a dialog width; the overlay clamps it to the terminal otherwise.
+				overlay: true,
+				overlayOptions: { anchor: "center", width: 80, maxHeight: "80%", margin: 1 },
 			});
 
 			return options.find((option) => option.value === selected);
@@ -419,22 +432,22 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			switch (action.kind) {
 				case "remove": {
 					const removed = engineRef.stop(action.id);
-					ctx.ui.notify(removed === 0 ? `没有找到 ${action.id}。` : `已删除 ${removed} 个循环。`, removed === 0 ? "warning" : "info");
+					ctx.ui.notify(removed === 0 ? `No loop with id ${action.id}.` : `Removed ${removed} loop(s).`, removed === 0 ? "warning" : "info");
 					// Nothing left to manage means nothing left to show: re-reading the list would
-					// replace the removal confirmation with "当前没有运行中的循环".
+					// replace the removal confirmation with "No loops are running."
 					return engineRef.isEmpty() ? "close" : "back";
 				}
 				case "toggle": {
 					if (action.enable) {
 						const resumed = engineRef.resume(action.id);
 						ctx.ui.notify(
-							resumed.length === 0 ? `${action.id} 并不处于暂停状态。` : `已启用 ${resumed.length} 个循环。`,
+							resumed.length === 0 ? `Loop ${action.id} was not paused.` : `Enabled ${resumed.length} loop(s).`,
 							resumed.length === 0 ? "warning" : "info",
 						);
 					} else {
 						const paused = engineRef.pause(action.id, "user");
 						ctx.ui.notify(
-							paused === 0 ? `${action.id} 已经处于暂停状态。` : `已禁用 ${paused} 个循环。`,
+							paused === 0 ? `Loop ${action.id} is already paused.` : `Disabled ${paused} loop(s).`,
 							paused === 0 ? "warning" : "info",
 						);
 					}
@@ -533,7 +546,10 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 					.list()
 					.filter((loop) => loop.paused === "agent")
 					.map((loop) => loop.id);
-				ctx.ui.notify(`Loop ${ids.join(", ")} paused: ${params.reason}`, "warning");
+				// `info`, not `warning`: this is the designed end of a loop (done, or blocked on an answer),
+				// and pi prefixes a warning with "Warning:" — which reads as a malfunction. The paused
+				// state stays visible in the footer and the panel regardless.
+				ctx.ui.notify(`Loop ${ids.join(", ")} paused: ${params.reason}`, "info");
 				return {
 					content: [
 						{

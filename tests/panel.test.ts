@@ -20,39 +20,39 @@ function loop(overrides: Partial<LoopRecord> = {}): LoopRecord {
 
 describe("optionTitle", () => {
 	it("counts the loops", () => {
-		expect(optionTitle(1)).toBe("循环 (1)");
-		expect(optionTitle(3)).toBe("循环 (3)");
+		expect(optionTitle(1)).toBe("Loops (1)");
+		expect(optionTitle(3)).toBe("Loops (3)");
 	});
 });
 
 describe("countdownLabel", () => {
 	it("reads as a time until the next run", () => {
-		expect(countdownLabel(150_000)).toBe("2m30s 后");
-		expect(countdownLabel(20_000)).toBe("20s 后");
+		expect(countdownLabel(150_000)).toBe("next 2m30s");
+		expect(countdownLabel(20_000)).toBe("next 20s");
 	});
 	it("says so when the run is due now", () => {
-		expect(countdownLabel(0)).toBe("即将执行");
-		expect(countdownLabel(400)).toBe("即将执行");
+		expect(countdownLabel(0)).toBe("due now");
+		expect(countdownLabel(400)).toBe("due now");
 	});
 });
 
 describe("loopOptions", () => {
 	it("puts the schedule on the primary column and the counts plus prompt on the detail column", () => {
 		const [row] = loopOptions([loop()], NOW);
-		expect(row!.label).toBe("l1 · 每 5m · 2m30s 后");
-		expect(row!.description).toBe("已跑 4 · 跳过 1 · check the deploy");
+		expect(row!.label).toBe("l1 · every 5m · next 2m30s");
+		expect(row!.description).toBe("runs 4 · skips 1 · check the deploy");
 		expect(row!.action).toEqual({ kind: "open", id: "l1" });
 	});
 
 	it("drops the run and skip counts for a paused loop and leads with why it stopped", () => {
 		const [waiting] = loopOptions([loop({ paused: "agent", breakReason: "which env?" })], NOW);
-		expect(waiting!.label).toBe("l1 · 每 5m · 已暂停");
-		expect(waiting!.label).not.toContain("已跑");
-		expect(waiting!.description).toBe("等待你的回答 · which env? · check the deploy");
+		expect(waiting!.label).toBe("l1 · every 5m · paused");
+		expect(waiting!.label).not.toContain("runs");
+		expect(waiting!.description).toBe("waiting for your answer · which env? · check the deploy");
 
 		const [disabled] = loopOptions([loop({ paused: "user" })], NOW);
-		expect(disabled!.label).toBe("l1 · 每 5m · 已禁用");
-		expect(disabled!.description).toBe("由你禁用 · check the deploy");
+		expect(disabled!.label).toBe("l1 · every 5m · disabled");
+		expect(disabled!.description).toBe("disabled by you · check the deploy");
 	});
 
 	it("omits the counts while a loop has not run yet", () => {
@@ -63,7 +63,7 @@ describe("loopOptions", () => {
 	it("ends with the row that closes the panel", () => {
 		const options = loopOptions([loop()], NOW);
 		expect(options.map((option) => option.value)).toEqual(["l1", "close"]);
-		expect(options.at(-1)!.label).toBe("关闭");
+		expect(options.at(-1)!.label).toBe("Close");
 		expect(options.at(-1)!.action).toEqual({ kind: "close" });
 	});
 
@@ -85,19 +85,19 @@ describe("loopOptions", () => {
 
 	it("collapses a multi-line prompt to its first line", () => {
 		const [row] = loopOptions([loop({ prompt: "first line\nsecond line" })], NOW);
-		expect(row!.description).toBe("已跑 4 · 跳过 1 · first line");
+		expect(row!.description).toBe("runs 4 · skips 1 · first line");
 	});
 
 	it("says what to do when nothing is running", () => {
 		expect(loopOptions([], NOW)).toEqual([]);
-		expect(noLoopsMessage()).toBe("当前没有运行中的循环。");
+		expect(noLoopsMessage()).toBe("No loops are running.");
 	});
 });
 
 describe("actionOptions", () => {
 	it("offers disable, remove, and back for a running loop", () => {
 		const options = actionOptions(loop());
-		expect(options.map((option) => option.label)).toEqual(["禁用", "删除", "返回"]);
+		expect(options.map((option) => option.label)).toEqual(["Disable", "Remove", "Back"]);
 		expect(options[0]!.action).toEqual({ kind: "toggle", id: "l1", enable: false });
 		expect(options[1]!.action).toEqual({ kind: "remove", id: "l1" });
 		expect(options[2]!.action).toEqual({ kind: "back" });
@@ -105,7 +105,7 @@ describe("actionOptions", () => {
 
 	it("offers enable instead of disable for a paused loop", () => {
 		const options = actionOptions(loop({ paused: "agent" }));
-		expect(options[0]!.label).toBe("启用");
+		expect(options[0]!.label).toBe("Enable");
 		expect(options[0]!.action).toEqual({ kind: "toggle", id: "l1", enable: true });
 	});
 });

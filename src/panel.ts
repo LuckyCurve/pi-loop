@@ -38,17 +38,17 @@ const PREVIEW_CHARS = 60;
 export const CLOSE_VALUE = "close";
 
 export function optionTitle(count: number): string {
-	return `循环 (${count})`;
+	return `Loops (${count})`;
 }
 
 export function noLoopsMessage(): string {
-	return "当前没有运行中的循环。";
+	return "No loops are running.";
 }
 
-/** `2m30s 后`, or `即将执行` when the run is due now. */
+/** `next 2m30s`, or `due now` when the run is overdue. */
 export function countdownLabel(ms: number): string {
 	const text = formatCountdown(Math.max(0, ms));
-	return text === "now" ? "即将执行" : `${text} 后`;
+	return text === "now" ? "due now" : `next ${text}`;
 }
 
 /** First line of the prompt, cut to fit one row. */
@@ -62,23 +62,22 @@ function preview(prompt: string, maxChars = PREVIEW_CHARS): string {
  * here: `agent` means the model is waiting on an answer, `user` means you switched it off.
  */
 function pauseLabel(loop: LoopRecord): string {
-	return loop.paused === "agent" ? "等待你的回答" : "由你禁用";
+	return loop.paused === "agent" ? "waiting for your answer" : "disabled by you";
 }
 
 /** The state word for the left column, so a disabled loop is not mistaken for a waiting one. */
 function stateLabel(loop: LoopRecord): string {
-	if (!loop.paused) return "已暂停";
-	return loop.paused === "agent" ? "已暂停" : "已禁用";
+	return loop.paused === "agent" ? "paused" : "disabled";
 }
 
 function schedule(loop: LoopRecord): string {
-	return `${loop.id} · 每 ${formatDuration(loop.intervalMs)} · `;
+	return `${loop.id} · every ${formatDuration(loop.intervalMs)} · `;
 }
 
 function counters(loop: LoopRecord): string[] {
 	const parts: string[] = [];
-	if (loop.runs > 0) parts.push(`已跑 ${loop.runs}`);
-	if (loop.skips > 0) parts.push(`跳过 ${loop.skips}`);
+	if (loop.runs > 0) parts.push(`runs ${loop.runs}`);
+	if (loop.skips > 0) parts.push(`skips ${loop.skips}`);
 	return parts;
 }
 
@@ -104,16 +103,16 @@ export function loopOptions(loops: readonly LoopRecord[], now: number): PanelOpt
 			action: { kind: "open", id: loop.id },
 		};
 	});
-	return [...rows, { value: CLOSE_VALUE, label: "关闭", description: "", action: { kind: "close" } }];
+	return [...rows, { value: CLOSE_VALUE, label: "Close", description: "", action: { kind: "close" } }];
 }
 
-/** Actions for one loop. `禁用` is a pause, so it can be undone without re-typing the prompt. */
+/** Actions for one loop. `Disable` is a pause, so it can be undone without re-typing the prompt. */
 export function actionOptions(loop: LoopRecord): PanelOption[] {
 	return [
 		loop.paused
-			? { value: "enable", label: "启用", description: "", action: { kind: "toggle", id: loop.id, enable: true } }
-			: { value: "disable", label: "禁用", description: "", action: { kind: "toggle", id: loop.id, enable: false } },
-		{ value: "remove", label: "删除", description: "", action: { kind: "remove", id: loop.id } },
-		{ value: "back", label: "返回", description: "", action: { kind: "back" } },
+			? { value: "enable", label: "Enable", description: "", action: { kind: "toggle", id: loop.id, enable: true } }
+			: { value: "disable", label: "Disable", description: "", action: { kind: "toggle", id: loop.id, enable: false } },
+		{ value: "remove", label: "Remove", description: "", action: { kind: "remove", id: loop.id } },
+		{ value: "back", label: "Back", description: "", action: { kind: "back" } },
 	];
 }

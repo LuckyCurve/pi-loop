@@ -87,6 +87,8 @@ interface Harness {
 	queueSelect(...answers: (string | undefined)[]): void;
 	/** Every dialog the extension showed, with the rows it rendered. */
 	selects: { title: string; options: string[] }[];
+	/** How each custom dialog was presented (overlay + anchor). */
+	presentation: { overlay: boolean; anchor: string | undefined }[];
 }
 
 function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unknown[] } = {}): Harness {
@@ -188,6 +190,7 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 		statuses: scripted.statuses,
 		entries,
 		selects: scripted.dialogs,
+		presentation: scripted.presentation,
 		queueSelect: scripted.script,
 		// Read through so tests observe the current activation set.
 		get tools(): string[] {
@@ -282,15 +285,15 @@ describe("loop extension", () => {
 	it("disables and re-enables a loop from the panel", async () => {
 		const h = await startedHarness();
 
-		h.queueSelect("l1", "禁用");
+		h.queueSelect("l1", "Disable");
 		await h.invokeCommand("");
-		expect(h.notifications.at(-1)!.message).toMatch(/已禁用 1/);
+		expect(h.notifications.at(-1)!.message).toMatch(/Disabled 1/);
 		h.clock.advance(600_000);
 		expect(h.sent).toHaveLength(1);
 
-		h.queueSelect("l1", "启用");
+		h.queueSelect("l1", "Enable");
 		await h.invokeCommand("");
-		expect(h.notifications.at(-1)!.message).toMatch(/已启用 1/);
+		expect(h.notifications.at(-1)!.message).toMatch(/Enabled 1/);
 		h.clock.advance(300_000);
 		expect(h.sent).toHaveLength(2);
 	});
@@ -305,46 +308,57 @@ describe("loop extension", () => {
 
 	it("opens the panel on a bare /loop in a UI session", async () => {
 		const h = await startedHarness();
-		h.queueSelect("关闭");
+		h.queueSelect("Close");
 		await h.invokeCommand("");
 
 		// The panel lists the loop, not the usage text: the popup is the primary surface.
-		expect(h.selects[0]!.title).toBe("循环 (1)");
+		expect(h.selects[0]!.title).toBe("Loops (1)");
 		expect(h.selects[0]!.options[0]).toContain("l1");
-		expect(h.selects[0]!.options[0]).toContain("每 5m");
+		expect(h.selects[0]!.options[0]).toContain("every 5m");
 		expect(h.selects[0]!.options[0]).toContain("check the deploy");
-		expect(h.selects[0]!.options.at(-1)).toBe("关闭");
+		expect(h.selects[0]!.options.at(-1)).toBe("Close");
 		expect(h.editorTexts).toHaveLength(0);
+	});
+
+	it("opens the panel as a centered overlay, not a selector in the editor", async () => {
+		// A management panel belongs in the middle of the screen. Rendering it in the editor slot at
+		// the bottom is what a plain `ctx.ui.select()` does, and dropping `overlay: true` would put it
+		// back there without changing a single row.
+		const h = await startedHarness();
+		h.queueSelect("Close");
+		await h.invokeCommand("");
+
+		expect(h.presentation).toEqual([{ overlay: true, anchor: "center" }]);
 	});
 
 	it("removes a loop from the panel", async () => {
 		const h = await startedHarness();
-		h.queueSelect("l1", "删除");
+		h.queueSelect("l1", "Remove");
 		await h.invokeCommand("");
 
-		expect(h.selects[1]!.options).toEqual(["禁用", "删除", "返回"]);
-		expect(h.notifications.at(-1)!.message).toMatch(/已删除 1/);
+		expect(h.selects[1]!.options).toEqual(["Disable", "Remove", "Back"]);
+		expect(h.notifications.at(-1)!.message).toMatch(/Removed 1/);
 		expect(h.tools).not.toContain(BREAK_TOOL_NAME);
 		expect(h.clock.pending).toBe(0);
 	});
 
 	it("disables a loop from the panel and enables it again", async () => {
 		const h = await startedHarness();
-		h.queueSelect("l1", "禁用");
+		h.queueSelect("l1", "Disable");
 		await h.invokeCommand("");
 
-		expect(h.notifications.at(-1)!.message).toMatch(/已禁用 1/);
+		expect(h.notifications.at(-1)!.message).toMatch(/Disabled 1/);
 		h.clock.advance(600_000);
 		expect(h.sent).toHaveLength(1);
 		// A disabled loop is still managed, so the break tool stays available.
 		expect(h.tools).toContain(BREAK_TOOL_NAME);
 
 		const before = h.selects.length;
-		h.queueSelect("l1", "启用");
+		h.queueSelect("l1", "Enable");
 		await h.invokeCommand("");
-		// The action selector for a paused loop offers 启用, not 禁用.
-		expect(h.selects[before + 1]!.options).toEqual(["启用", "删除", "返回"]);
-		expect(h.notifications.at(-1)!.message).toMatch(/已启用 1/);
+		// The action selector for a paused loop offers Enable, not Disable.
+		expect(h.selects[before + 1]!.options).toEqual(["Enable", "Remove", "Back"]);
+		expect(h.notifications.at(-1)!.message).toMatch(/Enabled 1/);
 		h.clock.advance(300_000);
 		expect(h.sent).toHaveLength(2);
 	});
@@ -358,12 +372,35 @@ describe("loop extension", () => {
 		expect(h.clock.pending).toBeGreaterThan(0);
 	});
 
+	it("clears the footer when the last loop is removed", async () => {
+		// Removal is the ordinary end of a loop, and the footer is the only always-visible signal
+		// that one is armed. Leaving the countdown up after the loop is gone is a lie.
+		const h = await startedHarness();
+		expect(h.statuses.at(-1)).toBeDefined();
+
+		h.queueSelect("l1", "Remove");
+		await h.invokeCommand("");
+
+		expect(h.clock.pending).toBe(0);
+		expect(h.statuses.at(-1)).toBeUndefined();
+	});
+
+	it("clears the footer when a loop expires", async () => {
+		const h = makeHarness({ settings: { expireAfterMs: 60_000 } });
+		await h.sessionStart();
+		await h.invokeCommand("30s check the deploy");
+		expect(h.statuses.at(-1)).toBeDefined();
+
+		h.clock.advance(60_000);
+		expect(h.statuses.at(-1)).toBeUndefined();
+	});
+
 	it("says nothing is running instead of opening an empty panel", async () => {
 		const h = makeHarness();
 		await h.sessionStart();
 		await h.invokeCommand("");
 		expect(h.selects).toHaveLength(0);
-		expect(h.notifications.at(-1)!.message).toBe("当前没有运行中的循环。");
+		expect(h.notifications.at(-1)!.message).toBe("No loops are running.");
 	});
 
 	it("shows only the current session's loops, and none after a switch", async () => {
@@ -378,7 +415,7 @@ describe("loop extension", () => {
 		await h.invokeCommand("");
 
 		expect(h.selects).toHaveLength(0);
-		expect(h.notifications.at(-1)!.message).toBe("当前没有运行中的循环。");
+		expect(h.notifications.at(-1)!.message).toBe("No loops are running.");
 	});
 
 	it("falls back to the usage text without a UI", async () => {
@@ -398,6 +435,19 @@ describe("loop extension", () => {
 
 		h.clock.advance(600_000);
 		expect(h.sent).toHaveLength(1);
+	});
+
+	it("reports an agent pause as information, not a warning", async () => {
+		// `loop_break` is the designed way a loop ends — done, or blocked on an answer — so pausing
+		// is a normal outcome, not a malfunction. pi renders a "warning" notification with a
+		// "Warning:" prefix, which makes a loop that stopped exactly as intended look broken.
+		const h = await startedHarness();
+		h.activateTool(BREAK_TOOL_NAME);
+		await h.invokeTool({ reason: "the user asked me to exit the loop" });
+
+		const pauseNotices = h.notifications.filter((n) => /paused/.test(n.message));
+		expect(pauseNotices.length).toBeGreaterThan(0);
+		expect(pauseNotices.at(-1)!.level).toBe("info");
 	});
 
 	it("does not resume on the loop's own injections", async () => {
