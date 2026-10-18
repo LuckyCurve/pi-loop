@@ -45,8 +45,13 @@ Two forms, nothing else:
 |---|---|
 | `/loop 5m <prompt>` | Run `<prompt>` every 5 minutes, first run immediately |
 | `/loop <prompt> every 20m` | Interval as a trailing clause |
-| `/loop <prompt>` | No interval: uses `defaultIntervalMs` (10m) |
+| `/loop <prompt>` | No interval: the model paces itself, with a 5m fallback |
 | `/loop` | Open the management panel: see, disable, or remove loops |
+
+**No interval means self-paced.** The model picks the wait between iterations — 1 to 60 minutes —
+based on what it just observed (`loop_schedule`). It is a nudge, not a lifeline: if it says nothing
+on some turn, the loop simply runs again after `defaultIntervalMs` (5m). Pausing, finishing, and
+`Run now` all work exactly as they do on a fixed-interval loop.
 
 There are no management subcommands — no `list`, `stop`, `pause`, or `resume` to remember. A bare
 `/loop` opens a panel in the middle of the screen with one row per loop — schedule, state, and
@@ -136,7 +141,7 @@ Add a `piLoop` block to `settings.json`. Every key is optional.
 ```jsonc
 {
   "piLoop": {
-    "defaultIntervalMs": 600000,   // interval for /loop <prompt> with no explicit one
+    "defaultIntervalMs": 300000,   // fallback wait when a self-paced loop's model says nothing
     "maxConsecutiveSkips": 0,      // 0 = keep skipping forever; N = stop after N in a row
     "expireAfterMs": 604800000,    // 7 days; 0 = never expire
     "maxLoops": 20,                // cap on concurrent loops
@@ -180,7 +185,7 @@ This project is developed test-first. See [AGENTS.md](AGENTS.md) for the working
 
 ```bash
 npm install
-npm test          # 179 tests
+npm test          # 206 tests
 npm run typecheck
 ```
 

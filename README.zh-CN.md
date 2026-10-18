@@ -38,8 +38,10 @@ pi -e ./extensions/loop/index.ts            # 临时试用，无需安装
 |---|---|
 | `/loop 5m <prompt>` | 每 5 分钟执行一次，首次立即执行 |
 | `/loop <prompt> every 20m` | 间隔写在句尾 |
-| `/loop <prompt>` | 不写间隔：使用 `defaultIntervalMs`（默认 10 分钟） |
+| `/loop <prompt>` | 不写间隔：由模型自己决定每轮等多久，兜底 5 分钟 |
 | `/loop` | 打开管理面板：查看、禁用、删除循环 |
+
+**不写间隔 = 自定节奏。** 模型根据刚观察到的结果自己决定下一轮等多久（1~60 分钟，`loop_schedule`）。它只是「优化」，不是「保命」：某一轮没给时间，就按 `defaultIntervalMs`（5 分钟）再来一次。暂停、完成、`Run now` 与固定间隔循环完全一致。
 
 没有管理子命令 —— 不需要记 `list`、`stop`、`pause`、`resume`。单独输入 `/loop` 会在**屏幕中间**弹出面板：列表页每个循环一行（`Task 1`、间隔、状态、次数），**不带任何散文**——每个循环的指令都不一样，共享一块只会显示光标恰好停在的那个。选中某行进入该 Task 自己的页面：先是 `Instruction`（你的原始指令，完整显示），然后是 `Stopped:`（模型停止时说的话）。两者带标签、分开、有先后，永远不会被当成同一段话。选中某行后可选：
 
@@ -106,7 +108,7 @@ prompt 长度不限，所以它永远不会被放进弹窗标题（标题是状�
 ```jsonc
 {
   "piLoop": {
-    "defaultIntervalMs": 600000,   // /loop <prompt> 未指定间隔时使用
+    "defaultIntervalMs": 300000,   // 自定节奏循环某一轮没给时间时的兜底间隔
     "maxConsecutiveSkips": 0,      // 0 = 一直跳过；N = 连续跳过 N 次后自动停止
     "expireAfterMs": 604800000,    // 7 天后过期；0 = 不过期
     "maxLoops": 20,                // 并发循环上限
@@ -145,7 +147,7 @@ prompt 长度不限，所以它永远不会被放进弹窗标题（标题是状�
 
 ```bash
 npm install
-npm test          # 179 个测试
+npm test          # 206 个测试
 npm run typecheck
 ```
 

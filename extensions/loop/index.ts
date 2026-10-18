@@ -46,6 +46,7 @@ import { composeStatus } from "../../src/status.ts";
 const STATE_TYPE = "pi-loop-state";
 const STATUS_KEY = "pi-loop";
 export const BREAK_TOOL_NAME = "loop_break";
+export const SCHEDULE_TOOL_NAME = "loop_schedule";
 
 export interface LoopSettings {
 	/** Interval used by `/loop <prompt>` without an explicit interval. */
@@ -71,7 +72,10 @@ export interface LoopSettings {
 }
 
 export const DEFAULT_SETTINGS: LoopSettings = {
-	defaultIntervalMs: 10 * 60_000,
+	// The fallback wait for a self-paced loop, used only when the model picks nothing that turn.
+	// Five minutes is long enough not to hammer the API and short enough that a forgotten pace is
+	// noticed within the same work session.
+	defaultIntervalMs: 5 * 60_000,
 	maxConsecutiveSkips: 0,
 	expireAfterMs: DEFAULT_EXPIRE_MS,
 	maxLoops: DEFAULT_MAX_LOOPS,
@@ -147,10 +151,25 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			if (!engine) return;
 			try {
 				const active = pi.getActiveTools();
-				const present = active.includes(BREAK_TOOL_NAME);
-				const wanted = !engine.isEmpty();
-				if (wanted && !present) pi.setActiveTools([...active, BREAK_TOOL_NAME]);
-				else if (!wanted && present) pi.setActiveTools(active.filter((name) => name !== BREAK_TOOL_NAME));
+				// `loop_schedule` only exists for a self-paced loop: on a fixed one there is no wait to
+				// decide, and offering the tool would invite a call that can only be refused.
+				const wanted: Record<string, boolean> = {
+					[BREAK_TOOL_NAME]: !engine.isEmpty(),
+					[SCHEDULE_TOOL_NAME]: engine.list().some((loop) => loop.pacing === "self"),
+				};
+				let next = [...active];
+				let changed = false;
+				for (const [name, want] of Object.entries(wanted)) {
+					const present = next.includes(name);
+					if (want && !present) {
+						next = [...next, name];
+						changed = true;
+					} else if (!want && present) {
+						next = next.filter((tool) => tool !== name);
+						changed = true;
+					}
+				}
+				if (changed) pi.setActiveTools(next);
 			} catch {
 				// Best effort: never let activation break loop bookkeeping or a scheduling callback.
 			}
@@ -275,6 +294,7 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 								id: loop.id,
 								intervalText: formatDuration(loop.intervalMs),
 								run: loop.runs,
+								pacing: loop.pacing,
 							}),
 							// A loop owns its iteration: no template expansion, so a prompt
 							// that starts with `/` cannot re-enter a slash command by accident.
@@ -580,10 +600,18 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 					}
 					case "start": {
 						try {
-							const loop = engineRef.start({ prompt: command.prompt, intervalMs: command.intervalMs });
+							const loop = engineRef.start({
+								prompt: command.prompt,
+								intervalMs: command.intervalMs,
+								pacing: command.pacing,
+							});
 							const total = engineRef.list().length;
+							const cadence =
+								command.pacing === "self"
+									? "you choose the wait each turn"
+									: `every ${command.intervalText}`;
 							ctx.ui.notify(
-								`${loopLabel(loop.id)} started: every ${command.intervalText}${total > 1 ? ` (${total} running)` : ""}.`,
+								`${loopLabel(loop.id)} started: ${cadence}${total > 1 ? ` (${total} running)` : ""}.`,
 								"info",
 							);
 						} catch (error) {
@@ -683,6 +711,74 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 						},
 					],
 					details: { paused: ids, finished: [] as string[], reason: params.reason },
+				};
+			},
+		});
+
+		pi.registerTool({
+			name: SCHEDULE_TOOL_NAME,
+			label: "Schedule next iteration",
+			description:
+				"Choose how long to wait before this self-paced loop runs again. Call it once per iteration, after finishing the work. The wait is clamped to 1-60 minutes. If you do not call it, the loop simply runs again after its fallback interval — you are choosing a better moment, not keeping the loop alive.",
+			promptSnippet: "Choose when this self-paced loop runs next",
+			promptGuidelines: [
+				"On a /loop started without an interval, call `loop_schedule` once per iteration to pick the next wait, based on what you just observed.",
+				"Pick a short wait when something is actively changing, a long one when nothing will change soon. Never use it to stop the loop — that is what `loop_break` is for.",
+			],
+			parameters: Type.Object({
+				delaySeconds: Type.Number({
+					description: "Seconds to wait before the next iteration. Clamped to 60-3600.",
+				}),
+				reason: Type.String({ description: "One short sentence: why that wait is right." }),
+				id: Type.Optional(Type.String({ description: "Loop id to pace; defaults to the loop that started this turn" })),
+			}),
+			defaultActive: false,
+			executionMode: "sequential",
+			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+				const active = ensureEngine(ctx);
+				const target = params.id ?? active.lastFired?.id ?? "all";
+				const loop = active.get(target);
+				if (!loop) {
+					return {
+						content: [{ type: "text", text: `No loop with id ${target}.` }],
+						details: { scheduled: false, reason: params.reason },
+					};
+				}
+				if (loop.pacing !== "self") {
+					return {
+						content: [
+							{
+								type: "text",
+								text: `${loopLabel(loop.id)} runs on a fixed interval, so there is no wait to choose.`,
+							},
+						],
+						details: { scheduled: false, reason: params.reason },
+					};
+				}
+				const delayMs = Math.round(params.delaySeconds * 1_000);
+				const applied = active.schedule(loop.id, delayMs);
+				if (!applied) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: `${loopLabel(loop.id)} is paused, so it is not scheduling a next iteration.`,
+							},
+						],
+						details: { scheduled: false, reason: params.reason },
+					};
+				}
+				const chosen = active.get(loop.id)!.pacedFor ?? delayMs;
+				const seconds = Math.round(chosen / 1_000);
+				ctx.ui.notify(`${loopLabel(loop.id)}: next iteration in ${formatDuration(chosen)} (${params.reason})`, "info");
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Next iteration of ${loopLabel(loop.id)} in ${seconds}s. Report this turn's result to the user, then end the turn.`,
+						},
+					],
+					details: { scheduled: true, delaySeconds: seconds, reason: params.reason },
 				};
 			},
 		});

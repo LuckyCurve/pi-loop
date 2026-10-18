@@ -107,6 +107,16 @@ by running against real pi rather than by reading docs:
 - **A loop is named `Task N`, never `l1`.** The stored id is a key, not a label. `loopLabel()` in
   `src/engine.ts` is the only place that turns one into the other, and every user-facing surface
   (status line, notifications, panel, tool text) goes through it.
+- **Self-pacing is a nudge, not a lifeline.** `/loop <prompt>` with no interval sets `pacing: "self"`:
+  the model calls `loop_schedule` each turn and `intervalMs` remains the fallback when it does not.
+  Anything that makes the loop *depend* on that call — dying when it is skipped — turns a forgotten
+  turn into a silent stop. `fireDue` always resets `pacedFor` and re-arms from `intervalMs`.
+- **`loop_schedule` is declared only for a self-paced loop.** A fixed interval has no wait to choose,
+  so offering the tool would invite a call that must be refused.
+- **The injection header states the pacing, because it is the model's only context.** A self-paced
+  loop's header reads `dynamic, you pick the next wait`; `every 5m` would read as a fixed cadence the
+  model has no say in, and it would never call `loop_schedule`. `isLoopInjection` matches both forms,
+  so a rescheduled loop's own prompt is still recognised as an iteration rather than user input.
 - **Run now is a nudge, not a resume.** `LoopEngine.runNow` injects one iteration and leaves `nextAt`,
   the skip counters, and the paused state untouched, so a manual run never resets the rhythm or hides
   a missed iteration. It skips while the agent is busy, like any other iteration.

@@ -56,7 +56,7 @@ describe("loopDetail", () => {
 	const nl = String.fromCharCode(10);
 
 	it("leads with the instruction, because that is what the user asked for", () => {
-		expect(loopDetail(loop())).toBe(`Instruction${nl}check the deploy`);
+		expect(loopDetail(loop())).toBe(`Instruction${String.fromCharCode(10)}check the deploy`);
 	});
 
 	it("carries the prompt in full, so a long one is readable somewhere", () => {
@@ -106,6 +106,39 @@ describe("loopOptions", () => {
 
 		const [disabled] = loopOptions([loop({ paused: "user" })], NOW);
 		expect(disabled!.label).toBe("Task 1 · every 5m · disabled");
+	});
+
+	it("marks a self-paced loop as dynamic instead of showing a fixed interval", () => {
+		// The interval a self-paced loop carries is only a fallback, so printing it as the cadence
+		// would be a lie: the next run may be far sooner or later.
+		const [row] = loopOptions([loop({ pacing: "self" })], NOW);
+		expect(row!.label).toBe("Task 1 · dynamic · next 2m30s");
+		expect(row!.label).not.toContain("every");
+	});
+
+	it("shows the countdown a self-paced loop actually chose", () => {
+		const [row] = loopOptions([loop({ pacing: "self", nextAt: NOW + 90_000, pacedFor: 90_000 })], NOW);
+		expect(row!.label).toBe("Task 1 · dynamic · next 1m30s");
+	});
+
+	it("names the state rather than a countdown for a paused self-paced loop", () => {
+		const [row] = loopOptions([loop({ pacing: "self", paused: "agent" })], NOW);
+		expect(row!.label).toBe("Task 1 · dynamic · paused");
+	});
+
+	it("says when the next run is due for a self-paced loop", () => {
+		expect(loopHeading(loop({ pacing: "self" }), NOW)).toBe("Task 1 · dynamic · next 2m30s");
+	});
+
+	it("explains the fallback on the detail page", () => {
+		// "dynamic" alone does not tell the user what happens if the model says nothing.
+		const detail = loopDetail(loop({ pacing: "self", intervalMs: 600_000 }));
+		expect(detail).toContain("dynamic");
+		expect(detail).toContain("10m");
+	});
+
+	it("does not claim a fallback on a fixed loop's detail", () => {
+		expect(loopDetail(loop())).toBe(`Instruction${String.fromCharCode(10)}check the deploy`);
 	});
 
 	it("leaves the detail column empty while a loop has not run yet", () => {

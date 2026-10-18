@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { FakeClock } from "./helpers/fake-clock.ts";
-import { BREAK_TOOL_NAME, createLoopExtension, type LoopSettings } from "../extensions/loop/index.ts";
+import { BREAK_TOOL_NAME, SCHEDULE_TOOL_NAME, createLoopExtension, type LoopSettings } from "../extensions/loop/index.ts";
 import { isLoopInjection } from "../src/commands.ts";
 import { scriptedUI } from "./helpers/scripted-ui.ts";
 
@@ -34,6 +34,10 @@ interface Harness {
 	emit(event: string, payload?: unknown): Promise<void>;
 	sessionStart(branch?: unknown[], reason?: string): Promise<void>;
 	invokeCommand(args: string): Promise<void>;
+	invokeSchedule(args: { delaySeconds: number; reason: string; id?: string }): Promise<{
+		content: { type: string; text: string }[];
+		details: { scheduled: boolean; delaySeconds?: number; reason: string };
+	}>;
 	invokeTool(args: { reason: string; id?: string; outcome?: "wait" | "done" }): Promise<{
 		details: { paused: string[]; finished: string[]; reason: string };
 	}>;
@@ -76,6 +80,15 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 		params: { reason: string; id?: string; outcome?: "wait" | "done" },
 		ctx: ExtensionContext,
 	) => Promise<ToolResult>) | undefined;
+	interface ScheduleResult {
+		content: { type: string; text: string }[];
+		details: { scheduled: boolean; delaySeconds?: number; reason: string };
+	}
+	let scheduleExecute: ((
+		id: string,
+		params: { delaySeconds: number; reason: string; id?: string },
+		ctx: ExtensionContext,
+	) => Promise<ScheduleResult>) | undefined;
 
 	const scripted = scriptedUI({
 		// pi throws from every ctx accessor once the session is replaced; the extension must absorb
@@ -128,14 +141,18 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 			name: string;
 			execute: (
 				id: string,
-				params: { reason: string; id?: string; outcome?: "wait" | "done" },
+				params: never,
 				signal: unknown,
 				update: unknown,
 				ctx: ExtensionContext,
-			) => Promise<ToolResult>;
+			) => Promise<never>;
 		}) => {
 			if (definition.name === BREAK_TOOL_NAME) {
-				toolExecute = (id, params, ctx) => definition.execute(id, params, undefined, undefined, ctx);
+				toolExecute = (id, params, ctx) =>
+					definition.execute(id, params as never, undefined, undefined, ctx) as never;
+			} else if (definition.name === SCHEDULE_TOOL_NAME) {
+				scheduleExecute = (id, params, ctx) =>
+					definition.execute(id, params as never, undefined, undefined, ctx) as never;
 			}
 		},
 		sendUserMessage: (content: string) => {
@@ -206,6 +223,10 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 		async invokeTool(args) {
 			if (!toolExecute) throw new Error("tool not registered");
 			return toolExecute("call-1", args, ctx);
+		},
+		async invokeSchedule(args) {
+			if (!scheduleExecute) throw new Error("schedule tool not registered");
+			return scheduleExecute("call-2", args, ctx);
 		},
 		activateTool: (name: string) => {
 			if (!tools.includes(name)) tools = [...tools, name];
@@ -559,6 +580,73 @@ describe("loop extension", () => {
 		const result = await h.invokeTool({ reason: "need a decision" });
 		expect(result.details.paused).toEqual(["l1"]);
 		expect(result.details.finished).toEqual([]);
+	});
+
+	it("defaults a self-paced loop's fallback to five minutes", async () => {
+		// The fallback only applies when the model says nothing, so it should be short enough to
+		// notice: a model that forgets to pace is still checked up on within the hour.
+		const h = makeHarness();
+		await h.sessionStart();
+		await h.invokeCommand("check the deploy");
+		expect((h.entries.at(-1)!.data as { loops: { intervalMs: number }[] }).loops[0]!.intervalMs).toBe(5 * 60_000);
+	});
+
+	it("starts a self-paced loop when no interval is given", async () => {
+		const h = makeHarness();
+		await h.sessionStart();
+		await h.invokeCommand("check the deploy");
+
+		expect(h.notifications.at(-1)!.message).toMatch(/you choose the wait/i);
+		expect((h.entries.at(-1)!.data as { loops: { pacing?: string }[] }).loops[0]!.pacing).toBe("self");
+	});
+
+	it("lets the model pick the next wait for a self-paced loop", async () => {
+		const h = makeHarness();
+		await h.sessionStart();
+		await h.invokeCommand("check the deploy");
+		h.activateTool(SCHEDULE_TOOL_NAME);
+
+		const result = await h.invokeSchedule({ delaySeconds: 120, reason: "the build takes two minutes" });
+		expect(result.details).toMatchObject({ scheduled: true, delaySeconds: 120 });
+		expect(h.sent.at(-1), "the instruction is carried into the next iteration").toBeDefined();
+
+		h.clock.advance(119_000);
+		expect(h.sent).toHaveLength(1);
+		h.clock.advance(1_000);
+		expect(h.sent).toHaveLength(2);
+	});
+
+	it("refuses to pace a fixed-interval loop and says why", async () => {
+		const h = await startedHarness();
+		h.activateTool(SCHEDULE_TOOL_NAME);
+		const result = await h.invokeSchedule({ delaySeconds: 60, reason: "x" });
+		expect(result.details.scheduled).toBe(false);
+		expect(result.content[0]!.text).toMatch(/fixed interval/i);
+	});
+
+	it("withdraws the pacing tool when no self-paced loop exists", async () => {
+		const h = makeHarness();
+		await h.sessionStart();
+		expect(h.tools, "no loop yet").not.toContain(SCHEDULE_TOOL_NAME);
+
+		await h.invokeCommand("5m fixed");
+		expect(h.tools, "a fixed loop does not need pacing").not.toContain(SCHEDULE_TOOL_NAME);
+
+		await h.invokeCommand("self-paced");
+		expect(h.tools, "a self-paced loop needs it").toContain(SCHEDULE_TOOL_NAME);
+	});
+
+	it("keeps loop_break working on a self-paced loop", async () => {
+		// Pacing only removes the interval. Pausing and finishing are unchanged.
+		const h = makeHarness();
+		await h.sessionStart();
+		await h.invokeCommand("check the deploy");
+		h.activateTool(BREAK_TOOL_NAME);
+
+		const result = await h.invokeTool({ reason: "which env?" });
+		expect(result.details.paused).toEqual(["l1"]);
+		h.clock.advance(3_600_000);
+		expect(h.sent).toHaveLength(1);
 	});
 
 	it("does not resume on the loop's own injections", async () => {

@@ -78,8 +78,16 @@ function pauseLabel(loop: LoopRecord): string {
 	return wording.waiting ? "waiting for your answer" : "disabled by you";
 }
 
+/**
+ * The cadence part of a row: `every 5m` for a fixed loop, `dynamic` for a self-paced one. Printing
+ * the fallback interval for a self-paced loop would misstate when it actually runs.
+ */
+function cadence(loop: LoopRecord): string {
+	return loop.pacing === "self" ? "dynamic" : `every ${formatDuration(loop.intervalMs)}`;
+}
+
 function schedule(loop: LoopRecord): string {
-	return `${loopLabel(loop.id)} · every ${formatDuration(loop.intervalMs)} · `;
+	return `${loopLabel(loop.id)} · ${cadence(loop)} · `;
 }
 
 function counters(loop: LoopRecord): string[] {
@@ -95,7 +103,7 @@ function counters(loop: LoopRecord): string[] {
  * filling that line leaves no border at all. The prompt belongs in `loopDetail`.
  */
 export function loopHeading(loop: LoopRecord, now: number): string {
-	const base = `${loopLabel(loop.id)} · every ${formatDuration(loop.intervalMs)}`;
+	const base = `${loopLabel(loop.id)} · ${cadence(loop)}`;
 	return loop.paused ? `${base} · ${stateLabel(loop)}` : `${base} · ${formatNextDue(loop.nextAt - now)}`;
 }
 
@@ -106,6 +114,13 @@ export function loopHeading(loop: LoopRecord, now: number): string {
 export function loopDetail(loop: LoopRecord): string {
 	// Instruction first: it is what the user asked for, and the agent's reply is the response to it.
 	const blocks: string[] = [["Instruction", loop.prompt.trim()].filter(Boolean).join("\n")];
+	if (loop.pacing === "self") {
+		// "dynamic" on its own does not say what happens when the model picks nothing.
+		const wait = loop.pacedFor
+			? `The model chose ${formatDuration(loop.pacedFor)} for the current wait.`
+			: `The model picks the wait each iteration; ${formatDuration(loop.intervalMs)} if it says nothing.`;
+		blocks.push(["Pacing", `dynamic \u2014 ${wait}`].join("\n"));
+	}
 	if (loop.paused) {
 		const stopped = [`Stopped: ${pauseLabel(loop)}`];
 		if (loop.breakReason) stopped.push(loop.breakReason);

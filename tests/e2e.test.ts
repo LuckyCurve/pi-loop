@@ -29,7 +29,7 @@ import {
 	getCurrentTools,
 	type Tool,
 } from "@earendil-works/pi-ai";
-import { BREAK_TOOL_NAME } from "../extensions/loop/index.ts";
+import { BREAK_TOOL_NAME, SCHEDULE_TOOL_NAME } from "../extensions/loop/index.ts";
 import { isLoopInjection } from "../src/commands.ts";
 import { removeLoop, scriptedUI, type ScriptedUI } from "./helpers/scripted-ui.ts";
 
@@ -386,6 +386,56 @@ describe("pi-loop against the real pi runtime", () => {
 			const count = state.requests.length;
 			await delay(2_500);
 			expect(state.requests.length).toBe(count);
+		},
+		120_000,
+	);
+
+	it(
+		"lets the model pace a loop that was started without an interval",
+		async () => {
+			// A bare `/loop <prompt>` is self-paced: the model decides the wait each turn. Whether
+			// an extension-registered tool can actually reschedule the next timer is something only
+			// a real session can answer.
+			const { session, state, ui } = await boot((request, index) =>
+				index === 0 && request.tools.includes(SCHEDULE_TOOL_NAME)
+					? {
+							toolCall: {
+								name: SCHEDULE_TOOL_NAME,
+								arguments: { delaySeconds: "2", reason: "nothing changes that fast" },
+							},
+						}
+					: { text: "ack" },
+			);
+
+			await session.prompt("/loop PACE_ME");
+			await waitFor(() => state.requests.length >= 1, "first iteration");
+			expect(state.requests[0]!.tools, "the pacing tool is offered").toContain(SCHEDULE_TOOL_NAME);
+			expect(state.requests[0]!.text).toMatch(/dynamic, you pick the next wait/);
+
+			await session.waitForIdle();
+			// The model asked for 2s, which is clamped up to the one-minute floor, so nothing fires
+			// inside the test's patience.
+			const afterFirst = state.requests.filter((request) => /· run 2 ·/.test(request.text)).length;
+			await delay(3_000);
+			expect(state.requests.filter((request) => /· run 2 ·/.test(request.text)).length).toBe(afterFirst);
+
+			await removeLoop(session, ui, "l1");
+		},
+		120_000,
+	);
+
+	it(
+		"does not offer the pacing tool for a fixed-interval loop",
+		async () => {
+			const { session, ui } = await boot(() => ({ text: "ack" }));
+			await session.prompt("/loop 1h FIXED");
+			await session.waitForIdle();
+			expect(session.getActiveToolNames()).toContain(BREAK_TOOL_NAME);
+			expect(session.getActiveToolNames(), "a fixed interval has no wait to choose").not.toContain(
+				SCHEDULE_TOOL_NAME,
+			);
+
+			await removeLoop(session, ui, "l1");
 		},
 		120_000,
 	);

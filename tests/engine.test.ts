@@ -254,6 +254,89 @@ describe("LoopEngine control", () => {
 	});
 });
 
+describe("LoopEngine self-paced loops", () => {
+	it("starts self-paced, with the default interval as the fallback", () => {
+		const h = harness();
+		const loop = h.engine.start({ prompt: "a", intervalMs: 600_000, pacing: "self" });
+		expect(loop.pacing).toBe("self");
+		expect(loop.intervalMs, "the fallback is still the default interval").toBe(600_000);
+		expect(h.injected).toHaveLength(1);
+	});
+
+	it("keeps the fallback schedule until the model picks a pace", () => {
+		// No `schedule` call this turn: the loop must still come back, one fallback interval later.
+		// A self-paced loop that forgot to reschedule would otherwise die silently.
+		const h = harness();
+		h.engine.start({ prompt: "a", intervalMs: 600_000, pacing: "self" });
+		h.clock.advance(600_000);
+		expect(h.injected).toHaveLength(2);
+	});
+
+	it("honours a pace the model picks", () => {
+		const h = harness();
+		h.engine.start({ prompt: "a", intervalMs: 600_000, pacing: "self" });
+		expect(h.engine.schedule("l1", 90_000)).toBe(true);
+		expect(h.engine.get("l1")!.nextAt).toBe(90_000);
+
+		h.clock.advance(89_999);
+		expect(h.injected).toHaveLength(1);
+		h.clock.advance(1);
+		expect(h.injected).toHaveLength(2);
+	});
+
+	it("clamps a chosen pace to sane bounds", () => {
+		const h = harness();
+		h.engine.start({ prompt: "a", intervalMs: 600_000, pacing: "self" });
+		// Too short: a self-paced loop hammering the model is worse than a fixed one.
+		h.engine.schedule("l1", 100);
+		expect(h.engine.get("l1")!.nextAt).toBe(60_000);
+		// Too long: past the hour bound Claude Code uses, and past our own expiry concerns.
+		h.engine.schedule("l1", 10 * 3_600_000);
+		expect(h.engine.get("l1")!.nextAt).toBe(3_600_000);
+	});
+
+	it("ignores a pace from a loop that is not self-paced", () => {
+		const h = harness();
+		h.engine.start({ prompt: "a", intervalMs: 60_000 });
+		expect(h.engine.schedule("l1", 5_000)).toBe(false);
+		expect(h.engine.get("l1")!.nextAt).toBe(60_000);
+	});
+
+	it("reports the pace it chose, for the model's next turn", () => {
+		const h = harness();
+		h.engine.start({ prompt: "a", intervalMs: 600_000, pacing: "self" });
+		h.engine.schedule("l1", 120_000);
+		expect(h.engine.get("l1")!.pacedFor).toBe(120_000);
+	});
+
+	it("clears the pace each iteration, so one turn's choice cannot stick", () => {
+		const h = harness();
+		h.engine.start({ prompt: "a", intervalMs: 600_000, pacing: "self" });
+		h.engine.schedule("l1", 60_000);
+		h.clock.advance(60_000);
+		expect(h.injected).toHaveLength(2);
+		expect(h.engine.get("l1")!.pacedFor, "the next turn must choose for itself").toBeUndefined();
+	});
+
+	it("falls back to the interval again when a paced turn picks nothing", () => {
+		const h = harness();
+		h.engine.start({ prompt: "a", intervalMs: 600_000, pacing: "self" });
+		h.engine.schedule("l1", 60_000);
+		h.clock.advance(60_000);
+		// The second turn picks nothing, so the fallback applies.
+		expect(h.engine.get("l1")!.nextAt - h.clock.now()).toBe(600_000);
+	});
+
+	it("cannot be re-paced while paused, so a stopped loop stays stopped", () => {
+		const h = harness();
+		h.engine.start({ prompt: "a", intervalMs: 600_000, pacing: "self" });
+		h.engine.pause("l1", "agent", "need input");
+		expect(h.engine.schedule("l1", 60_000)).toBe(false);
+		h.clock.advance(3_600_000);
+		expect(h.injected).toHaveLength(1);
+	});
+});
+
 describe("LoopEngine outcomes", () => {
 	it("pauses on a wait outcome and stays waking on a reply", () => {
 		const h = harness();

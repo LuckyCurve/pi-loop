@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatInjection, parseLoopCommand, usageText } from "../src/commands.ts";
+import { formatInjection, isLoopInjection, parseLoopCommand, usageText } from "../src/commands.ts";
 import { formatDuration, MAX_INTERVAL_MS, MIN_INTERVAL_MS } from "../src/duration.ts";
 
 const DEFAULT = 10 * 60_000;
@@ -20,6 +20,7 @@ describe("parseLoopCommand", () => {
 			kind: "start",
 			intervalMs: 300_000,
 			intervalText: "5m",
+			pacing: "fixed",
 			prompt: "check the deploy",
 		});
 	});
@@ -30,19 +31,28 @@ describe("parseLoopCommand", () => {
 			kind: "start",
 			intervalMs: 1_200_000,
 			intervalText: "20m",
+			pacing: "fixed",
 			prompt: "check CI",
 		});
 		const byWord = parseLoopCommand("check CI every 5 minutes", DEFAULT);
 		expect(byWord.kind === "start" && byWord.intervalMs).toBe(300_000);
 	});
 
-	it("falls back to the default interval", () => {
+	it("asks for self-pacing when no interval is given", () => {
+		// The user often has no idea what interval is right, so "no interval" means "you decide,
+		// iteration by iteration" — with the default interval as the fallback if the model forgets.
 		expect(parseLoopCommand("check the deploy", DEFAULT)).toEqual({
 			kind: "start",
 			intervalMs: DEFAULT,
 			intervalText: "10m",
+			pacing: "self",
 			prompt: "check the deploy",
 		});
+	});
+
+	it("keeps a fixed interval when the user gives one", () => {
+		const command = parseLoopCommand("5m check the deploy", DEFAULT);
+		expect(command.kind === "start" && command.pacing).toBe("fixed");
 	});
 
 	it("keeps multi-line prompts", () => {
@@ -83,7 +93,7 @@ describe("usageText", () => {
 
 	it("documents only the two ways to use /loop", () => {
 		const text = usageText(DEFAULT);
-		expect(text).toContain("defaults to 10m");
+		expect(text).toContain("10m if you say nothing");
 		// No management subcommands: the panel is reached by a bare `/loop`.
 		expect(text).not.toContain("/loop list");
 		expect(text).not.toContain("/loop stop");
@@ -96,5 +106,21 @@ describe("formatInjection", () => {
 	it("prefixes the prompt with a loop header", () => {
 		const text = formatInjection("check the deploy", { id: "l1", intervalText: "5m", run: 3 });
 		expect(text).toBe("[loop l1 · run 3 · every 5m]\ncheck the deploy");
+	});
+
+	it("tells the model it picks the wait on a self-paced loop", () => {
+		// The header is the only place the model is told about the loop it is inside. "every 5m"
+		// would read as a fixed cadence, and the model would never call loop_schedule.
+		const text = formatInjection("check the deploy", {
+			id: "l1",
+			intervalText: "5m",
+			run: 3,
+			pacing: "self",
+		});
+		expect(text).toBe("[loop l1 · run 3 · dynamic, you pick the next wait]\ncheck the deploy");
+	});
+
+	it("still recognises a self-paced header as a loop iteration", () => {
+		expect(isLoopInjection("[loop l1 · run 3 · dynamic, you pick the next wait]\nx")).toBe(true);
 	});
 });

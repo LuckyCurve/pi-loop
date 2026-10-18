@@ -29,7 +29,23 @@ export interface LoopRecord {
 	/** Set while the loop is blocked. */
 	paused?: LoopPauseCause;
 	breakReason?: string;
+	/**
+	 * `"fixed"` (default) runs every `intervalMs`. `"self"` lets the model choose when the next
+	 * iteration happens, with `intervalMs` as the fallback when it chooses nothing.
+	 */
+	pacing?: LoopPacing;
+	/** The delay the model chose for the current wait, while that wait is in effect. */
+	pacedFor?: number;
 }
+
+export type LoopPacing = "fixed" | "self";
+
+/**
+ * Bounds a self-paced delay. Below a minute the model would hammer the API; above an hour the user
+ * has stopped watching and the "loop" is indistinguishable from a forgotten process.
+ */
+export const MIN_PACED_MS = 60_000;
+export const MAX_PACED_MS = 3_600_000;
 
 export type NotifyLevel = "info" | "warning" | "error";
 
@@ -42,7 +58,9 @@ export interface LoopEngineHost {
 	/** Deliver one iteration of `record` to the agent. */
 	inject(record: LoopRecord): void;
 	/** Loop set or counts changed; refresh status UI and persisted state. */
-	onChange(reason: "add" | "remove" | "run" | "skip" | "pause" | "resume" | "expire"): void;
+	onChange(
+		reason: "add" | "remove" | "run" | "skip" | "pause" | "resume" | "expire" | "schedule",
+	): void;
 	notify(message: string, level: NotifyLevel): void;
 	/** Fires before an iteration is injected, letting the host record a transcript marker. */
 	onBeforeInject?(record: LoopRecord): void;
@@ -65,6 +83,8 @@ export interface LoopEngineOptions {
 export interface StartLoopInput {
 	prompt: string;
 	intervalMs: number;
+	/** Defaults to `"fixed"`. `"self"` adds a per-turn pacing choice on top of the fallback. */
+	pacing?: LoopPacing;
 	now?: number;
 }
 
@@ -150,6 +170,7 @@ export class LoopEngine {
 			consecutiveSkips: 0,
 			// The first iteration runs immediately, like Claude Code's `/loop`.
 			nextAt: now,
+			...(input.pacing === "self" ? { pacing: "self" as const } : {}),
 		};
 		this.loops.push(record);
 		this.host.onChange("add");
@@ -238,6 +259,25 @@ export class LoopEngine {
 		return "ran";
 	}
 
+	/**
+	 * Choose when this loop runs next. Only meaningful for a self-paced loop, and only while it is
+	 * running: a paused loop stays paused, since the model may not restart itself by pacing.
+	 *
+	 * Returns false when the request does not apply, so the caller can tell the model rather than
+	 * silently ignoring it.
+	 */
+	schedule(id: string, delayMs: number, now = this.clock.now()): boolean {
+		if (this.disposed) return false;
+		const loop = this.get(id);
+		if (!loop || loop.pacing !== "self" || loop.paused) return false;
+		const delay = Math.min(MAX_PACED_MS, Math.max(MIN_PACED_MS, Math.round(delayMs)));
+		loop.pacedFor = delay;
+		loop.nextAt = now + delay;
+		this.host.onChange("schedule");
+		this.arm();
+		return true;
+	}
+
 	/** Loops paused by the agent, i.e. the ones a user reply should resume. */
 	get agentPaused(): LoopRecord[] {
 		return this.loops.filter((loop) => loop.paused === "agent");
@@ -285,6 +325,7 @@ export class LoopEngine {
 				continue;
 			}
 			if (this.host.isBusy()) {
+				loop.pacedFor = undefined;
 				loop.skips++;
 				loop.consecutiveSkips++;
 				loop.lastSkipAt = now;
@@ -309,6 +350,9 @@ export class LoopEngine {
 			loop.runs++;
 			loop.consecutiveSkips = 0;
 			loop.lastRunAt = now;
+			// The model gets one turn to pick a pace. Not picking falls back to the interval, so a
+			// self-paced loop can never die just because a turn forgot to reschedule.
+			loop.pacedFor = undefined;
 			loop.nextAt = now + loop.intervalMs;
 			this.lastFiredId = loop.id;
 			this.host.onBeforeInject?.(loop);
@@ -390,6 +434,7 @@ export class LoopEngine {
 							? Math.max(now, Math.round(raw.nextAt))
 							: now + intervalMs,
 				...(raw.paused === "agent" || raw.paused === "user" ? { paused: raw.paused } : {}),
+				...(raw.pacing === "self" ? { pacing: "self" as const } : {}),
 				...(typeof raw.breakReason === "string" ? { breakReason: raw.breakReason } : {}),
 			});
 		}
