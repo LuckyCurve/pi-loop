@@ -8,7 +8,7 @@
  */
 
 import { formatDuration, formatNextDue } from "./duration.ts";
-import { loopLabel, type LoopRecord } from "./engine.ts";
+import { loopCadence, loopLabel, type LoopRecord } from "./engine.ts";
 
 export type PanelAction =
 	/** Open the action list for one loop. */
@@ -78,16 +78,8 @@ function pauseLabel(loop: LoopRecord): string {
 	return wording.waiting ? "waiting for your answer" : "disabled by you";
 }
 
-/**
- * The cadence part of a row: `every 5m` for a fixed loop, `dynamic` for a self-paced one. Printing
- * the fallback interval for a self-paced loop would misstate when it actually runs.
- */
-function cadence(loop: LoopRecord): string {
-	return loop.pacing === "self" ? "dynamic" : `every ${formatDuration(loop.intervalMs)}`;
-}
-
 function schedule(loop: LoopRecord): string {
-	return `${loopLabel(loop.id)} · ${cadence(loop)} · `;
+	return `${loopLabel(loop.id)} · ${loopCadence(loop)} · `;
 }
 
 function counters(loop: LoopRecord): string[] {
@@ -103,7 +95,7 @@ function counters(loop: LoopRecord): string[] {
  * filling that line leaves no border at all. The prompt belongs in `loopDetail`.
  */
 export function loopHeading(loop: LoopRecord, now: number): string {
-	const base = `${loopLabel(loop.id)} · ${cadence(loop)}`;
+	const base = `${loopLabel(loop.id)} · ${loopCadence(loop)}`;
 	return loop.paused ? `${base} · ${stateLabel(loop)}` : `${base} · ${formatNextDue(loop.nextAt - now)}`;
 }
 

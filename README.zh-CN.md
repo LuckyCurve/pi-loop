@@ -98,8 +98,10 @@ prompt 长度不限，所以它永远不会被放进弹窗标题（标题是状�
 循环运行期间，状态栏显示最近一次触发时间：
 
 ```
-⟳ LOOP l1 · every 5m · next 2m30s · runs 4 · skips 1 · +1 more
+⟳ LOOP Task 1 · every 5m · next 2m30s · runs 4 · skips 1 · +1 more
 ```
+
+自定节奏的循环在这里显示 `dynamic`，固定间隔的显示 `every 5m`。整行用当前主题的 `accent`、`muted`、`dim` 角色着色，因此在亮色和暗色主题下都与页脚其它文字的亮度一致，切换主题后立刻跟随。
 
 ## 配置
 
@@ -147,7 +149,7 @@ prompt 长度不限，所以它永远不会被放进弹窗标题（标题是状�
 
 ```bash
 npm install
-npm test          # 206 个测试
+npm test          # 214 个测试
 npm run typecheck
 ```
 

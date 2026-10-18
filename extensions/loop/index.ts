@@ -119,6 +119,7 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 		let ctxRef: ExtensionContext | undefined;
 		let statusTimer: unknown;
 		let lastStatus: string | undefined;
+		let lastTheme: unknown;
 		let refreshing = false;
 		let lastNotifyAt = 0;
 		let lastNotifyMessage = "";
@@ -188,8 +189,17 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			if (!engine || refreshing || !ctxRef) return;
 			refreshing = true;
 			try {
+				// The footer sits on the transcript background, so an unthemed line is the brightest
+				// text on screen. Paint through the active theme instead, and repaint when it changes:
+				// the cached string carries the old theme's escape codes.
+				const theme = ctxRef.mode === "tui" ? ctxRef.ui.theme : undefined;
+				if (theme !== lastTheme) {
+					lastTheme = theme;
+					lastStatus = undefined;
+				}
 				const status = composeStatus(engine.list(), clock.now(), {
 					countdown: settings.statusRefreshMs > 0,
+					...(theme ? { paint: (role, text) => theme.fg(role, text) } : {}),
 				});
 				if (status !== lastStatus) {
 					lastStatus = status;
@@ -376,6 +386,7 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			disposeEngine();
 			engine = createEngine(ctx);
 			lastStatus = undefined;
+			lastTheme = undefined;
 			if (event.reason === "reload") restoreFromBranch(ctx);
 			else syncToolActivation();
 		});

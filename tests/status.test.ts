@@ -27,6 +27,14 @@ describe("composeStatus", () => {
 		expect(composeStatus([loop()], NOW)).toBe("⟳ LOOP Task 1 · every 5m · next 2m30s");
 	});
 
+	it("names a self-paced loop dynamic instead of quoting its fallback interval", () => {
+		// The fallback is only what happens when the model says nothing. A footer reading
+		// `every 5m` while the panel reads `dynamic` is the same loop described two ways.
+		expect(composeStatus([loop({ pacing: "self" })], NOW)).toBe(
+			"⟳ LOOP Task 1 · dynamic · next 2m30s",
+		);
+	});
+
 	it("adds run and skip counts once they are non-zero", () => {
 		expect(composeStatus([loop({ runs: 4, skips: 1 })], NOW)).toBe(
 			"⟳ LOOP Task 1 · every 5m · next 2m30s · runs 4 · skips 1",

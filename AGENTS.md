@@ -126,6 +126,15 @@ by running against real pi rather than by reading docs:
 - **The extension owns the panel it opened.** pi calls `dispose()` when a dialog closes normally, but
   its teardown path only *hides* the overlay, so a panel open across a session switch would leave a
   repaint timer running for the life of the process. `disposeEngine()` disposes it too.
+- **One cadence helper, because the footer and the panel describe the same loop.** `loopCadence()`
+  in `src/engine.ts` is the only place a rhythm becomes words; the footer said `every 5m` for a
+  self-paced loop while the panel said `dynamic`, which reads as two different loops.
+- **The footer is painted through the theme, not the terminal default.** `ctx.ui.setStatus` takes no
+  color, so the roles ride inside the string (`accent` for `⟳`, `muted` for the label, `dim` for
+  everything else). Unpainted, the line is the brightest text on the transcript background. RPC gets
+  plain text: an escape code there is a literal byte in a JSON status. Because the composed string
+  carries the theme's codes, a theme change has to invalidate `lastStatus` — pi swaps the `Theme`
+  instance, so identity is the signal.
 - **The footer changes on the mark, not on a cadence.** `footerCountdown` snaps to the 15s grid and
   `msUntilFooterChange` arms the timer for exactly that long, so the status line never redraws an
   unchanged number. The panel is the opposite surface: it ticks every second, because the countdown

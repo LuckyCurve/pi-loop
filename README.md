@@ -131,8 +131,12 @@ it ticks once a second, because there the countdown is what you opened it to loo
 While a loop is running, the status line shows the closest upcoming fire:
 
 ```
-⟳ LOOP l1 · every 5m · next 2m30s · runs 4 · skips 1 · +1 more
+⟳ LOOP Task 1 · every 5m · next 2m30s · runs 4 · skips 1 · +1 more
 ```
+
+A self-paced loop reads `dynamic` where a fixed one reads `every 5m`. The line is painted with the
+active theme's `accent`, `muted`, and `dim` roles, so it sits at the same brightness as the rest of
+the footer on both light and dark themes, and follows a theme change immediately.
 
 ## Settings
 
@@ -185,7 +189,7 @@ This project is developed test-first. See [AGENTS.md](AGENTS.md) for the working
 
 ```bash
 npm install
-npm test          # 206 tests
+npm test          # 214 tests
 npm run typecheck
 ```
 

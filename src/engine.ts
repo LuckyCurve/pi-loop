@@ -7,6 +7,7 @@
  */
 
 import { type Clock, systemClock } from "./clock.ts";
+import { formatDuration } from "./duration.ts";
 
 export type LoopPauseCause = "agent" | "user";
 
@@ -93,6 +94,14 @@ export interface StartLoopInput {
  * forces the eye to decode a letter before a number. Lives here because the engine's own notices use
  * it, and every user-facing surface must name a loop the same way.
  */
+/**
+ * How a loop's rhythm reads to a user. A self-paced loop carries an interval, but it is only the
+ * fallback for a turn that chooses nothing, so quoting it as the cadence would misstate the schedule.
+ */
+export function loopCadence(loop: LoopRecord): string {
+	return loop.pacing === "self" ? "dynamic" : `every ${formatDuration(loop.intervalMs)}`;
+}
+
 export function loopLabel(id: string): string {
 	const match = /^l([0-9]+)$/.exec(id);
 	return match ? `Task ${match[1]}` : id;

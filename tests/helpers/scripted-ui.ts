@@ -63,6 +63,12 @@ export interface ScriptedUIOptions {
 	onDialog?: () => void;
 	/** Thrown from `setStatus`, e.g. to simulate a context that went stale mid-render. */
 	onSetStatus?: () => void;
+	/**
+	 * The theme object pi exposes on `ctx.ui.theme`. A provider rather than a value because pi
+	 * swaps the instance when the user changes theme, and identity is what tells callers to repaint.
+	 * Returning undefined models RPC, which has no theme.
+	 */
+	theme?: () => { fg(role: string, text: string): string } | undefined;
 }
 
 const TEST_THEME = {
@@ -102,6 +108,9 @@ export function scriptedUI(options: ScriptedUIOptions = {}): ScriptedUI {
 		setStatus: (_key: string, text: string | undefined) => {
 			options.onSetStatus?.();
 			statuses.push(text);
+		},
+		get theme() {
+			return options.theme?.();
 		},
 		setEditorText: (text: string) => {
 			editorTexts.push(text);

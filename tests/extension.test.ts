@@ -47,6 +47,9 @@ interface Harness {
 	setNoUI(value: boolean): void;
 	/** Make `ui.setStatus` throw, as pi does for a stale context. */
 	setStatusThrows(value: boolean): void;
+	/** Replace the theme object pi exposes, as switching theme does. */
+	setTheme(theme: { fg(role: string, text: string): string }): void;
+	statusCount(): number;
 	/** Act while a dialog is open; see `scriptedUI`. */
 	setOnDialogOpen(hook: () => void | Promise<void>): void;
 	/** Repaints requested by live dialogs. */
@@ -68,7 +71,14 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 	const editorTexts: string[] = [];
 	const entries: { customType: string; data: unknown }[] = [];
 	let tools: string[] = ["read", "bash", "edit", "write"];
-	const state = { busy: false, stale: false, failAppend: false, noUI: false, statusThrows: false };
+	const state = {
+		busy: false,
+		stale: false,
+		failAppend: false,
+		noUI: false,
+		statusThrows: false,
+		theme: undefined as { fg(role: string, text: string): string } | undefined,
+	};
 
 	let commandHandler: ((args: string, ctx: ExtensionContext) => Promise<void>) | undefined;
 	interface ToolResult {
@@ -96,6 +106,7 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 		onNotify: () => {
 			if (state.stale) throw new Error("This extension ctx is stale after session replacement or reload.");
 		},
+		theme: () => state.theme,
 		onSetStatus: () => {
 			if (state.statusThrows) {
 				throw new Error("This extension ctx is stale after session replacement or reload.");
@@ -207,6 +218,10 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 		setStatusThrows: (value: boolean) => {
 			state.statusThrows = value;
 		},
+		setTheme: (theme: { fg(role: string, text: string): string } | undefined) => {
+			state.theme = theme;
+		},
+		statusCount: () => scripted.statuses.length,
 		setOnDialogOpen: (hook) => {
 			scripted.onDialogOpen = () => hook();
 		},
@@ -764,6 +779,36 @@ describe("loop extension", () => {
 		h.stale = true;
 		expect(() => h.clock.advance(300_000)).not.toThrow();
 		expect(h.clock.pending).toBe(0);
+	});
+
+	it("keeps the footer counting down after the model picks a pace", async () => {
+		// The footer is repainted when its snapped value changes, not on a fixed cadence. A pace the
+		// model chose must not leave the footer frozen at the value it had when it was scheduled.
+		const h = makeHarness();
+		await h.sessionStart();
+		await h.invokeCommand("check the deploy");
+		h.activateTool(SCHEDULE_TOOL_NAME);
+		await h.invokeSchedule({ delaySeconds: 135, reason: "the build takes a while" });
+
+		const paced = h.statuses.at(-1)!;
+		expect(paced, "the footer reports the chosen wait").toContain("next 2m15s");
+
+		h.clock.advance(15_000);
+		expect(h.statuses.at(-1)).toContain("next 2m");
+		h.clock.advance(15_000);
+		expect(h.statuses.at(-1)).toContain("next 1m45s");
+		h.clock.advance(45_000);
+		expect(h.statuses.at(-1)).toContain("next 1m");
+	});
+
+	it("repaints the footer when the theme changes", async () => {
+		// The cached status carries escape codes from the theme it was composed with.
+		const h = await startedHarness();
+		const before = h.statusCount();
+		h.setTheme({ fg: (role: string, text: string) => `<${role}>${text}</>` });
+		h.clock.advance(15_000);
+		expect(h.statusCount()).toBeGreaterThan(before);
+		expect(h.statuses.at(-1)).toContain("<accent>");
 	});
 
 	it("survives a stale context thrown from the footer refresh itself", async () => {
