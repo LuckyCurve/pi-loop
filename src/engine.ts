@@ -213,6 +213,9 @@ export class LoopEngine {
 		for (const loop of targets) {
 			if (loop.paused) continue;
 			loop.paused = cause;
+			// A stopped loop has no wait, and a stale choice would make the resumed loop's fallback
+			// look chosen — which is the one kind of wait allowed to queue behind a running turn.
+			loop.pacedFor = undefined;
 			if (reason !== undefined) loop.breakReason = reason;
 			changed++;
 		}
@@ -334,7 +337,14 @@ export class LoopEngine {
 				continue;
 			}
 			if (this.host.isBusy()) {
-				loop.pacedFor = undefined;
+				if (loop.pacedFor !== undefined) {
+					// The model chose this wait mid-turn, so it expired while the run that chose it was
+					// still going. Nothing was missed and nothing is late, so this is not a skip: keep
+					// the choice and take the iteration as soon as the run hands control back. Dropping
+					// to the skip path here would silently reset a paced loop to its fallback cadence.
+					loop.nextAt = now + CONTENTION_RETRY_MS;
+					continue;
+				}
 				loop.skips++;
 				loop.consecutiveSkips++;
 				loop.lastSkipAt = now;

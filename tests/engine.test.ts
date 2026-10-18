@@ -327,6 +327,51 @@ describe("LoopEngine self-paced loops", () => {
 		expect(h.engine.get("l1")!.nextAt - h.clock.now()).toBe(600_000);
 	});
 
+	it("keeps a chosen pace that expires inside the run instead of counting a skip", () => {
+		// The model picks its wait while the turn is still running. If that wait expires before it
+		// hands control back, the iteration is not late and nothing was missed — the world simply
+		// moved on. Recording a skip there threw the choice away and reset the loop to its fallback,
+		// which is the one outcome a paced loop must never have.
+		const h = harness({ busyAfterInject: true });
+		h.engine.start({ prompt: "a", intervalMs: 600_000, pacing: "self", now: 0 });
+		h.engine.schedule("l1", 60_000, 0);
+		h.clock.advance(60_000);
+
+		const loop = h.engine.get("l1")!;
+		expect(loop.skips, "an expiry inside the run is not a skip").toBe(0);
+		expect(loop.consecutiveSkips).toBe(0);
+		expect(loop.pacedFor, "the chosen pace survives").toBe(60_000);
+
+		// As soon as the run hands control back, the iteration happens.
+		h.busy = false;
+		h.clock.advance(2_000);
+		expect(h.injected).toHaveLength(2);
+	});
+
+	it("forgets the pace when the loop is paused", () => {
+		// A paused loop has no wait at all. Keeping the old choice would make the resumed loop's
+		// fallback look chosen, and a chosen wait is the one that is allowed to queue.
+		const h = harness({ busyAfterInject: true });
+		h.engine.start({ prompt: "a", intervalMs: 600_000, pacing: "self", now: 0 });
+		h.engine.schedule("l1", 60_000, 0);
+		h.engine.pause("l1", "agent", "which env?");
+		expect(h.engine.get("l1")!.pacedFor).toBeUndefined();
+
+		h.engine.resume("l1");
+		h.clock.advance(600_000);
+		expect(h.engine.get("l1")!.skips, "the fallback still skips").toBe(1);
+	});
+
+	it("still skips a self-paced loop whose fallback interval expires while busy", () => {
+		// Only a pace the model chose may wait for idle. The fallback is a fixed cadence, and fixed
+		// cadences skip rather than queue.
+		const h = harness({ busyAfterInject: true });
+		h.engine.start({ prompt: "a", intervalMs: 600_000, pacing: "self", now: 0 });
+		h.clock.advance(600_000);
+		expect(h.engine.get("l1")!.skips).toBe(1);
+		expect(h.injected).toHaveLength(1);
+	});
+
 	it("cannot be re-paced while paused, so a stopped loop stays stopped", () => {
 		const h = harness();
 		h.engine.start({ prompt: "a", intervalMs: 600_000, pacing: "self" });

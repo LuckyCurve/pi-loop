@@ -111,6 +111,12 @@ by running against real pi rather than by reading docs:
   the model calls `loop_schedule` each turn and `intervalMs` remains the fallback when it does not.
   Anything that makes the loop *depend* on that call — dying when it is skipped — turns a forgotten
   turn into a silent stop. `fireDue` always resets `pacedFor` and re-arms from `intervalMs`.
+- **A chosen wait waits for idle; only a fixed cadence skips.** The model picks its wait mid-turn, so
+  that wait can expire while the run that chose it is still going. Treating that as a skip recorded a
+  miss that never happened *and* discarded the choice, silently resetting the loop to its fallback —
+  the one outcome a paced loop must not have. `fireDue` keeps `pacedFor` and retries instead. This is
+  not queueing into a running turn: the wait had already elapsed, so the iteration lands the moment
+  the run hands control back.
 - **`loop_schedule` is declared only for a self-paced loop.** A fixed interval has no wait to choose,
   so offering the tool would invite a call that must be refused.
 - **The injection header states the pacing, because it is the model's only context.** A self-paced

@@ -50,7 +50,9 @@ Two forms, nothing else:
 
 **No interval means self-paced.** The model picks the wait between iterations — 1 to 60 minutes —
 based on what it just observed (`loop_schedule`). It is a nudge, not a lifeline: if it says nothing
-on some turn, the loop simply runs again after `defaultIntervalMs` (5m). Pausing, finishing, and
+on some turn, the loop simply runs again after `defaultIntervalMs` (5m). The wait is chosen during
+the iteration itself, so if it runs out while the agent is still working, the next iteration happens
+as soon as that work finishes — it is never counted as a missed one. Pausing, finishing, and
 `Run now` all work exactly as they do on a fixed-interval loop.
 
 There are no management subcommands — no `list`, `stop`, `pause`, or `resume` to remember. A bare
@@ -189,7 +191,7 @@ This project is developed test-first. See [AGENTS.md](AGENTS.md) for the working
 
 ```bash
 npm install
-npm test          # 214 tests
+npm test          # 217 tests
 npm run typecheck
 ```
 
