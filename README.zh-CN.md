@@ -149,7 +149,7 @@ prompt 长度不限，所以它永远不会被放进弹窗标题（标题是状�
 
 ```bash
 npm install
-npm test          # 217 个测试
+npm test          # 218 个测试
 npm run typecheck
 ```
 

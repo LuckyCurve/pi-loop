@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { FakeClock } from "./helpers/fake-clock.ts";
-import { LoopEngine, type LoopEngineHost, type LoopRecord, type NotifyLevel } from "../src/engine.ts";
+import {
+	CONTENTION_RETRY_MS,
+	LoopEngine,
+	type LoopEngineHost,
+	type LoopRecord,
+	type NotifyLevel,
+} from "../src/engine.ts";
 
 /** Deterministic clock: time only moves when the test says so. */
 interface Harness {
@@ -346,6 +352,33 @@ describe("LoopEngine self-paced loops", () => {
 		h.busy = false;
 		h.clock.advance(2_000);
 		expect(h.injected).toHaveLength(2);
+	});
+
+	it("turns a 1m pace chosen inside a 10m run into the iteration right after that run", () => {
+		// The scenario a self-paced loop actually hits: the model says "look again in a minute", then
+		// keeps working for ten. Nothing fires during the run, nothing is counted as missed, and the
+		// wait that has already elapsed is served the moment the run hands control back.
+		const h = harness({ busyAfterInject: true });
+		h.engine.start({ prompt: "a", intervalMs: 300_000, pacing: "self", now: 0 });
+		h.clock.advance(10_000);
+		h.engine.schedule("l1", 60_000);
+
+		// Nine minutes and fifty seconds later the run is still going.
+		h.clock.advance(590_000);
+		expect(h.injected, "nothing is injected into the running turn").toHaveLength(1);
+		expect(h.engine.get("l1")!.skips, "waiting for idle is not a skip").toBe(0);
+		expect(h.engine.get("l1")!.pacedFor, "the choice is still there").toBe(60_000);
+
+		h.busy = false;
+		h.clock.advance(CONTENTION_RETRY_MS);
+		expect(h.injected, "served within the retry window").toHaveLength(2);
+		// The follow-up wait is the fallback again, measured from this iteration.
+		expect(h.engine.get("l1")!.pacedFor).toBeUndefined();
+		expect(h.engine.get("l1")!.nextAt).toBe(602_000 + 300_000);
+
+		// The next run is long too, so the fallback expiry inside it is a real skip.
+		h.clock.advance(300_000);
+		expect(h.engine.get("l1")!.skips).toBe(1);
 	});
 
 	it("forgets the pace when the loop is paused", () => {
