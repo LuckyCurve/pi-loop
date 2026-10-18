@@ -73,9 +73,9 @@ export interface LoopSettings {
 
 export const DEFAULT_SETTINGS: LoopSettings = {
 	// The fallback wait for a self-paced loop, used only when the model picks nothing that turn.
-	// Five minutes is long enough not to hammer the API and short enough that a forgotten pace is
+	// Ten minutes is long enough not to hammer the API and short enough that a forgotten pace is
 	// noticed within the same work session.
-	defaultIntervalMs: 5 * 60_000,
+	defaultIntervalMs: 10 * 60_000,
 	maxConsecutiveSkips: 0,
 	expireAfterMs: DEFAULT_EXPIRE_MS,
 	maxLoops: DEFAULT_MAX_LOOPS,

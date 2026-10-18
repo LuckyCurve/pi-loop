@@ -45,12 +45,12 @@ Two forms, nothing else:
 |---|---|
 | `/loop 5m <prompt>` | Run `<prompt>` every 5 minutes, first run immediately |
 | `/loop <prompt> every 20m` | Interval as a trailing clause |
-| `/loop <prompt>` | No interval: the model paces itself, with a 5m fallback |
+| `/loop <prompt>` | No interval: the model paces itself, with a 10m fallback |
 | `/loop` | Open the management panel: see, disable, or remove loops |
 
 **No interval means self-paced.** The model picks the wait between iterations — 1 to 60 minutes —
 based on what it just observed (`loop_schedule`). It is a nudge, not a lifeline: if it says nothing
-on some turn, the loop simply runs again after `defaultIntervalMs` (5m). The wait is chosen during
+on some turn, the loop simply runs again after `defaultIntervalMs` (10m). The wait is chosen during
 the iteration itself, so if it runs out while the agent is still working, the next iteration happens
 as soon as that work finishes — it is never counted as a missed one. Pausing, finishing, and
 `Run now` all work exactly as they do on a fixed-interval loop.
@@ -151,7 +151,7 @@ Add a `piLoop` block to `settings.json`. Every key is optional.
 ```jsonc
 {
   "piLoop": {
-    "defaultIntervalMs": 300000,   // fallback wait when a self-paced loop's model says nothing
+    "defaultIntervalMs": 600000,   // fallback wait when a self-paced loop's model says nothing
     "maxConsecutiveSkips": 0,      // 0 = keep skipping forever; N = stop after N in a row
     "expireAfterMs": 604800000,    // 7 days; 0 = never expire
     "maxLoops": 20,                // cap on concurrent loops

@@ -597,13 +597,13 @@ describe("loop extension", () => {
 		expect(result.details.finished).toEqual([]);
 	});
 
-	it("defaults a self-paced loop's fallback to five minutes", async () => {
-		// The fallback only applies when the model says nothing, so it should be short enough to
-		// notice: a model that forgets to pace is still checked up on within the hour.
+	it("defaults a self-paced loop's fallback to ten minutes", async () => {
+		// The fallback only applies when the model says nothing, so it is a check-up, not a hammer: a
+		// model that forgets to pace is still revisited inside the same work session.
 		const h = makeHarness();
 		await h.sessionStart();
 		await h.invokeCommand("check the deploy");
-		expect((h.entries.at(-1)!.data as { loops: { intervalMs: number }[] }).loops[0]!.intervalMs).toBe(5 * 60_000);
+		expect((h.entries.at(-1)!.data as { loops: { intervalMs: number }[] }).loops[0]!.intervalMs).toBe(10 * 60_000);
 	});
 
 	it("starts a self-paced loop when no interval is given", async () => {
@@ -811,7 +811,7 @@ describe("loop extension", () => {
 
 		// The run ends with no pace chosen, the way a failed turn does.
 		await h.emit("agent_settled");
-		h.clock.advance(5 * 60_000);
+		h.clock.advance(10 * 60_000);
 		expect(h.sent, "the fallback fires instead of the loop disappearing").toHaveLength(2);
 	});
 
