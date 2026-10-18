@@ -794,6 +794,19 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 			},
 		});
 
+		// The run that picked a pace has ended, so a wait that already elapsed while it was running can
+		// be served now. `agent_settled`, not `agent_end`: pi emits `agent_end` while the run still
+		// counts as active, so a tick there would find the session busy and defer again to the
+		// backstop. `agent_settled` is emitted after the run is cleared, which is the state the engine
+		// is asking about.
+		pi.on("agent_settled", async () => {
+			try {
+				engine?.tick();
+			} catch {
+				// A stale context is not this event's problem; the next tick or teardown handles it.
+			}
+		});
+
 		// A real user message releases loops the agent paused. Loop injections arrive as
 		// extension-sourced input, so they never count as the user's answer.
 		pi.on("input", async (event) => {

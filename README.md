@@ -108,6 +108,10 @@ The tool takes an `outcome`:
 Picking `done` is what makes a finished loop stay finished. A paused loop resumes on any real
 message, and "thanks" is not a reason to start working again.
 
+**A failed iteration is not a stop.** A provider error, an aborted turn, or a model that ends without
+choosing a wait all leave the schedule armed, so the loop tries again instead of quietly disappearing.
+Only `loop_break`, removing the loop yourself, the expiry window, or closing the session end it.
+
 The intended pattern for work that needs human input:
 
 ```
@@ -191,7 +195,7 @@ This project is developed test-first. See [AGENTS.md](AGENTS.md) for the working
 
 ```bash
 npm install
-npm test          # 218 tests
+npm test          # 223 tests
 npm run typecheck
 ```
 

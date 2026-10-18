@@ -29,6 +29,7 @@ import {
 	getCurrentTools,
 	type Tool,
 } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { BREAK_TOOL_NAME, SCHEDULE_TOOL_NAME } from "../extensions/loop/index.ts";
 import { isLoopInjection } from "../src/commands.ts";
 import { removeLoop, scriptedUI, type ScriptedUI } from "./helpers/scripted-ui.ts";
@@ -105,6 +106,8 @@ describe("pi-loop against the real pi runtime", () => {
 
 	async function boot(
 		script: (request: Request, index: number) => { text?: string; toolCall?: { name: string; arguments: Record<string, string> } },
+		// A second extension, for tests that have to observe pi's own event contract.
+		extraExtension?: (pi: ExtensionAPI) => void,
 	): Promise<{ session: AgentSession; state: MockState; ui: ScriptedUI }> {
 		const state: MockState = { requests: [], slowFor: 0, holdMs: 1_500 };
 		const ui = scriptedUI();
@@ -151,6 +154,7 @@ describe("pi-loop against the real pi runtime", () => {
 			agentDir: getAgentDir(),
 			additionalExtensionPaths: ["./extensions/loop/index.ts"],
 			noExtensions: true,
+			...(extraExtension ? { extensionFactories: [extraExtension] } : {}),
 		});
 		await resourceLoader.reload();
 
@@ -420,6 +424,52 @@ describe("pi-loop against the real pi runtime", () => {
 			expect(state.requests.filter((request) => /· run 2 ·/.test(request.text)).length).toBe(afterFirst);
 
 			await removeLoop(session, ui, "l1");
+		},
+		120_000,
+	);
+
+	it(
+		"keeps a fixed loop running after an iteration fails",
+		async () => {
+			// A provider error is not the user saying stop. The loop's next fire was armed before the
+			// run started, so a failed iteration must leave it armed rather than pause or remove it.
+			const { session, state, ui } = await boot((_request, index) => {
+				if (index === 0) throw new Error("provider exploded");
+				return { text: "ack" };
+			});
+
+			await session.prompt("/loop 1s FLAKY");
+			await waitFor(
+				() => state.requests.some((request) => /· run 2 ·/.test(request.text)),
+				"second iteration after a failed first one",
+			);
+
+			await session.waitForIdle();
+			await removeLoop(session, ui, "l1");
+		},
+		120_000,
+	);
+
+	it(
+		"reports agent_settled only once the session is idle, unlike agent_end",
+		async () => {
+			// The engine serves a wait that expired during a run by ticking on `agent_settled`. That
+			// only works because pi emits this event after the run is cleared: at `agent_end` the
+			// session still counts as running, and a tick there would defer again. If pi ever reorders
+			// this, the loop would silently go back to its minute-long backstop.
+			const seen: string[] = [];
+			const { session } = await boot(() => ({ text: "ack" }), (pi) => {
+				pi.on("agent_end", (_event, ctx) => {
+					seen.push(`agent_end:${ctx.isIdle()}`);
+				});
+				pi.on("agent_settled", (_event, ctx) => {
+					seen.push(`agent_settled:${ctx.isIdle()}`);
+				});
+			});
+			await session.prompt("hi");
+			await session.waitForIdle();
+			expect(seen).toContain("agent_end:false");
+			expect(seen).toContain("agent_settled:true");
 		},
 		120_000,
 	);

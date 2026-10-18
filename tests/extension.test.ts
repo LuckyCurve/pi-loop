@@ -801,6 +801,54 @@ describe("loop extension", () => {
 		expect(h.statuses.at(-1)).toContain("next 1m");
 	});
 
+	it("keeps a self-paced loop running when an iteration fails before it picks a wait", async () => {
+		// A run can end without `loop_schedule`: the provider errored, the turn was cut off, the model
+		// forgot. That is not a decision to stop, so the fallback must still be armed.
+		const h = makeHarness();
+		await h.sessionStart();
+		await h.invokeCommand("check the deploy");
+		expect(h.sent, "the first iteration runs").toHaveLength(1);
+
+		// The run ends with no pace chosen, the way a failed turn does.
+		await h.emit("agent_settled");
+		h.clock.advance(5 * 60_000);
+		expect(h.sent, "the fallback fires instead of the loop disappearing").toHaveLength(2);
+	});
+
+	it("does not resume a loop the model stopped just because a run failed", async () => {
+		// `wait` paused the loop for a reason. An unrelated failing run must not answer for the user.
+		const h = makeHarness();
+		await h.sessionStart();
+		await h.invokeCommand("check the deploy");
+		h.activateTool(BREAK_TOOL_NAME);
+		await h.invokeTool({ reason: "which env?" });
+
+		await h.emit("agent_settled");
+		h.clock.advance(60 * 60_000);
+		expect(h.sent).toHaveLength(1);
+	});
+
+	it("serves a wait that expired during a long run as soon as the run ends", async () => {
+		// The model picks its wait mid-turn, so the wait can expire while that turn is still going.
+		// pi says the run is over with `agent_settled`, which is the signal to use: polling for
+		// idleness would wake the engine hundreds of times to learn what this event states outright.
+		const h = makeHarness();
+		await h.sessionStart();
+		await h.invokeCommand("check the deploy");
+		h.activateTool(SCHEDULE_TOOL_NAME);
+		await h.invokeSchedule({ delaySeconds: 60, reason: "the build takes a minute" });
+
+		// The turn keeps running past the chosen wait.
+		h.setBusy(true);
+		h.clock.advance(60_000);
+		expect(h.sent, "nothing is injected into the running turn").toHaveLength(1);
+
+		// pi reports the settled run; no clock advance is needed.
+		h.setBusy(false);
+		await h.emit("agent_settled");
+		expect(h.sent, "served the moment the run ends").toHaveLength(2);
+	});
+
 	it("repaints the footer when the theme changes", async () => {
 		// The cached status carries escape codes from the theme it was composed with.
 		const h = await startedHarness();

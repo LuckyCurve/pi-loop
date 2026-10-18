@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FakeClock } from "./helpers/fake-clock.ts";
 import {
-	CONTENTION_RETRY_MS,
+	AWAIT_IDLE_MS,
 	LoopEngine,
 	type LoopEngineHost,
 	type LoopRecord,
@@ -126,10 +126,11 @@ describe("LoopEngine scheduling", () => {
 		const b = h.engine.get("l2")!;
 		expect(b.skips).toBe(0);
 		expect(b.consecutiveSkips).toBe(0);
-		expect(b.nextAt).toBe(1_000 + 2_000);
+		expect(b.nextAt, "only a backstop: the run's end is the real signal").toBe(1_000 + AWAIT_IDLE_MS);
 
+		// `agent_end` ticks the engine, so the deferred loop is served the moment the run ends.
 		h.busy = false;
-		h.engine.tick(3_000);
+		h.engine.tick(1_500);
 		expect(h.injected.map((loop) => loop.prompt)).toEqual(["a", "b"]);
 	});
 
@@ -348,9 +349,10 @@ describe("LoopEngine self-paced loops", () => {
 		expect(loop.consecutiveSkips).toBe(0);
 		expect(loop.pacedFor, "the chosen pace survives").toBe(60_000);
 
-		// As soon as the run hands control back, the iteration happens.
+		// As soon as the run hands control back, the iteration happens — no clock movement needed,
+		// because the end of the run is an event, not something to wait out.
 		h.busy = false;
-		h.clock.advance(2_000);
+		h.engine.tick();
 		expect(h.injected).toHaveLength(2);
 	});
 
@@ -370,11 +372,11 @@ describe("LoopEngine self-paced loops", () => {
 		expect(h.engine.get("l1")!.pacedFor, "the choice is still there").toBe(60_000);
 
 		h.busy = false;
-		h.clock.advance(CONTENTION_RETRY_MS);
-		expect(h.injected, "served within the retry window").toHaveLength(2);
+		h.engine.tick();
+		expect(h.injected, "served the moment the run ends").toHaveLength(2);
 		// The follow-up wait is the fallback again, measured from this iteration.
 		expect(h.engine.get("l1")!.pacedFor).toBeUndefined();
-		expect(h.engine.get("l1")!.nextAt).toBe(602_000 + 300_000);
+		expect(h.engine.get("l1")!.nextAt).toBe(600_000 + 300_000);
 
 		// The next run is long too, so the fallback expiry inside it is a real skip.
 		h.clock.advance(300_000);

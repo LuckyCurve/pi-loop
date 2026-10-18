@@ -37,6 +37,11 @@ export interface LoopRecord {
 	pacing?: LoopPacing;
 	/** The delay the model chose for the current wait, while that wait is in effect. */
 	pacedFor?: number;
+	/**
+	 * Set while a wait has already elapsed but the run it expired inside had not finished. `nextAt`
+	 * then only holds the backstop, because the real signal is the end of that run.
+	 */
+	awaitingIdle?: boolean;
 }
 
 export type LoopPacing = "fixed" | "self";
@@ -114,7 +119,13 @@ export const DEFAULT_EXPIRE_MS = 7 * 24 * 60 * 60 * 1_000;
  * queued into the run that just started). The others are retried after this delay instead of
  * counting a busy skip, so transient contention does not penalize them.
  */
-export const CONTENTION_RETRY_MS = 2_000;
+/**
+ * How long the engine waits before looking again at a loop whose wait has already elapsed but whose
+ * turn is still running. This is a backstop only: `agent_end` is the signal that the run is over, and
+ * the extension ticks the engine from it. Polling for idleness instead would wake up hundreds of times
+ * to learn what that event states outright, so the interval is deliberately coarse.
+ */
+export const AWAIT_IDLE_MS = 60_000;
 
 export class LoopEngine {
 	private readonly clock: Clock;
@@ -216,6 +227,7 @@ export class LoopEngine {
 			// A stopped loop has no wait, and a stale choice would make the resumed loop's fallback
 			// look chosen — which is the one kind of wait allowed to queue behind a running turn.
 			loop.pacedFor = undefined;
+			loop.awaitingIdle = undefined;
 			if (reason !== undefined) loop.breakReason = reason;
 			changed++;
 		}
@@ -319,7 +331,7 @@ export class LoopEngine {
 	private fireDue(now: number): void {
 		if (this.disposed) return;
 		const due = this.loops
-			.filter((loop) => !loop.paused && loop.nextAt <= now)
+			.filter((loop) => !loop.paused && (loop.awaitingIdle === true || loop.nextAt <= now))
 			.sort((a, b) => a.nextAt - b.nextAt || a.createdAt - b.createdAt);
 
 		let served = false;
@@ -331,9 +343,11 @@ export class LoopEngine {
 				continue;
 			}
 			if (served) {
-				// Another loop in this pass already started a run. Retry shortly without
-				// counting a skip: the agent is busy because of us, not because of the user.
-				loop.nextAt = now + CONTENTION_RETRY_MS;
+				// Another loop in this pass already started a run. Try again without counting a skip:
+				// the agent is busy because of us, not because of the user. `agent_end` comes sooner
+				// than the backstop, and is what normally serves this.
+				loop.awaitingIdle = true;
+				loop.nextAt = now + AWAIT_IDLE_MS;
 				continue;
 			}
 			if (this.host.isBusy()) {
@@ -342,9 +356,11 @@ export class LoopEngine {
 					// still going. Nothing was missed and nothing is late, so this is not a skip: keep
 					// the choice and take the iteration as soon as the run hands control back. Dropping
 					// to the skip path here would silently reset a paced loop to its fallback cadence.
-					loop.nextAt = now + CONTENTION_RETRY_MS;
+					loop.awaitingIdle = true;
+					loop.nextAt = now + AWAIT_IDLE_MS;
 					continue;
 				}
+				loop.awaitingIdle = undefined;
 				loop.skips++;
 				loop.consecutiveSkips++;
 				loop.lastSkipAt = now;
@@ -372,6 +388,7 @@ export class LoopEngine {
 			// The model gets one turn to pick a pace. Not picking falls back to the interval, so a
 			// self-paced loop can never die just because a turn forgot to reschedule.
 			loop.pacedFor = undefined;
+			loop.awaitingIdle = undefined;
 			loop.nextAt = now + loop.intervalMs;
 			this.lastFiredId = loop.id;
 			this.host.onBeforeInject?.(loop);

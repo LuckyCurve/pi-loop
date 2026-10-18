@@ -100,6 +100,11 @@ by running against real pi rather than by reading docs:
   prompt reaches the panel through `loopDetail`, wrapped into the detail block below the rows. A
   prompt drawn into the border has no length limit and eats the whole line, leaving the box with no
   top edge. `tests/panel.test.ts` asserts the caption cannot contain a prompt.
+- **A failed iteration is not a stop.** `nextAt` is armed before `inject`, so a provider error, an
+  aborted turn, or a turn that ends without `loop_schedule` leaves the loop scheduled. Nothing in the
+  error path may pause or remove a loop: only `loop_break`, the panel, expiry, and a finite
+  `maxConsecutiveSkips` do. The one interaction to keep in mind is a retry storm, which holds the
+  agent busy and therefore accumulates skips like any other long run.
 - **Two endings, not one.** `loop_break` with `outcome: "done"` removes the loop; the default
   `"wait"` pauses it and any real user message resumes it. A single "stop" that pauses would make a
   finished loop indistinguishable from a blocked one, and the user's next message would restart
