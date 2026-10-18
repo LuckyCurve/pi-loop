@@ -194,8 +194,9 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 		 */
 		function armStatusTimer(): void {
 			disarmStatusTimer();
-			if (!engine || engine.isEmpty() || settings.statusRefreshMs <= 0 || ctxRef?.mode !== "tui") return;
-			const nextAt = engine.nextFireAt;
+			const current = engine;
+			if (!current || current.isEmpty() || settings.statusRefreshMs <= 0 || ctxRef?.mode !== "tui") return;
+			const nextAt = current.nextFireAt;
 			const untilChange =
 				nextAt === undefined
 					? settings.statusRefreshMs
@@ -212,12 +213,15 @@ export function createLoopExtension(options: LoopExtensionOptions = {}) {
 		 * when the loop set changes, and must clear when the last loop goes.
 		 */
 		function syncStatusTimer(): void {
+			// `refreshStatus` may call `disposeEngine()` when the context turns out to be stale, so
+			// `engine` has to be re-read after it rather than trusted across the call.
 			if (!engine) {
 				disarmStatusTimer();
 				return;
 			}
 			refreshStatus();
-			if (engine.isEmpty() || settings.statusRefreshMs <= 0) {
+			const current = engine;
+			if (!current || current.isEmpty() || settings.statusRefreshMs <= 0) {
 				disarmStatusTimer();
 				return;
 			}

@@ -41,6 +41,8 @@ interface Harness {
 	/** Event names the extension subscribed to. */
 	registeredEvents: string[];
 	setNoUI(value: boolean): void;
+	/** Make `ui.setStatus` throw, as pi does for a stale context. */
+	setStatusThrows(value: boolean): void;
 	/** Act while a dialog is open; see `scriptedUI`. */
 	setOnDialogOpen(hook: () => void | Promise<void>): void;
 	/** Repaints requested by live dialogs. */
@@ -62,7 +64,7 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 	const editorTexts: string[] = [];
 	const entries: { customType: string; data: unknown }[] = [];
 	let tools: string[] = ["read", "bash", "edit", "write"];
-	const state = { busy: false, stale: false, failAppend: false, noUI: false };
+	const state = { busy: false, stale: false, failAppend: false, noUI: false, statusThrows: false };
 
 	let commandHandler: ((args: string, ctx: ExtensionContext) => Promise<void>) | undefined;
 	interface ToolResult {
@@ -80,6 +82,11 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 		// that inside a timer callback, where nothing else can catch it.
 		onNotify: () => {
 			if (state.stale) throw new Error("This extension ctx is stale after session replacement or reload.");
+		},
+		onSetStatus: () => {
+			if (state.statusThrows) {
+				throw new Error("This extension ctx is stale after session replacement or reload.");
+			}
 		},
 	});
 	const ui = scripted.ui;
@@ -179,6 +186,9 @@ function makeHarness(options: { settings?: Partial<LoopSettings>; branch?: unkno
 		},
 		setNoUI: (value: boolean) => {
 			state.noUI = value;
+		},
+		setStatusThrows: (value: boolean) => {
+			state.statusThrows = value;
 		},
 		setOnDialogOpen: (hook) => {
 			scripted.onDialogOpen = () => hook();
@@ -666,6 +676,19 @@ describe("loop extension", () => {
 		h.stale = true;
 		expect(() => h.clock.advance(300_000)).not.toThrow();
 		expect(h.clock.pending).toBe(0);
+	});
+
+	it("survives a stale context thrown from the footer refresh itself", async () => {
+		// `refreshStatus` catches a stale context and calls `disposeEngine()`, which sets `engine` to
+		// undefined. Anything that touches `engine` after that call — the very next line of
+		// `syncStatusTimer`, and `armStatusTimer` — hits undefined. CI found this as an uncaught
+		// TypeError from inside a timer, where nothing can catch it.
+		const h = await startedHarness();
+		h.setStatusThrows(true);
+
+		expect(() => h.clock.advance(15_000)).not.toThrow();
+		expect(() => h.clock.advance(60_000)).not.toThrow();
+		expect(h.clock.pending, "the engine is gone, so nothing stays armed").toBe(0);
 	});
 
 	it("survives persistence failures while a loop is running", async () => {

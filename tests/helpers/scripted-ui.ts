@@ -61,6 +61,8 @@ export interface ScriptedUIOptions {
 	onNotify?: (message: string, level: string) => void;
 	/** Thrown from `select`/`custom`, e.g. to simulate a dialog that cannot open. */
 	onDialog?: () => void;
+	/** Thrown from `setStatus`, e.g. to simulate a context that went stale mid-render. */
+	onSetStatus?: () => void;
 }
 
 const TEST_THEME = {
@@ -98,6 +100,7 @@ export function scriptedUI(options: ScriptedUIOptions = {}): ScriptedUI {
 			options.onNotify?.(message, resolved);
 		},
 		setStatus: (_key: string, text: string | undefined) => {
+			options.onSetStatus?.();
 			statuses.push(text);
 		},
 		setEditorText: (text: string) => {
